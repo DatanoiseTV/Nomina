@@ -19,6 +19,7 @@ use time::format_description::well_known::Rfc3339;
 use crate::models::QueryLog;
 
 const RECENT_CAPACITY: usize = 200;
+const LATENCY_CAPACITY: usize = 4000;
 const SERIES_WINDOW: usize = 300; // seconds retained
 const SERIES_OUTPUT: usize = 60; // seconds returned to the dashboard
 const TOP_TRACK_CAP: usize = 5000; // distinct domains tracked
@@ -28,6 +29,7 @@ const TOP_RETURN: usize = 20;
 pub enum QueryOutcome {
     Authoritative,
     Forwarded,
+    Cached,
     NxDomain,
     Refused,
     ServFail,
@@ -42,6 +44,7 @@ impl QueryOutcome {
         match self {
             QueryOutcome::Authoritative => "authoritative",
             QueryOutcome::Forwarded => "forwarded",
+            QueryOutcome::Cached => "cached",
             QueryOutcome::NxDomain => "nxdomain",
             QueryOutcome::Refused => "refused",
             QueryOutcome::ServFail => "servfail",
@@ -68,6 +71,7 @@ struct Counters {
     total: AtomicU64,
     authoritative: AtomicU64,
     forwarded: AtomicU64,
+    cached: AtomicU64,
     nxdomain: AtomicU64,
     refused: AtomicU64,
     servfail: AtomicU64,
@@ -138,6 +142,8 @@ pub struct Stats {
     top_domains: Mutex<HashMap<String, u64>>,
     top_blocked: Mutex<HashMap<String, u64>>,
     series: Mutex<Series>,
+    /// Recent per-query latencies in microseconds (bounded ring).
+    latencies: Mutex<VecDeque<u64>>,
     started: Instant,
     started_at: String,
 }
@@ -151,6 +157,7 @@ impl Default for Stats {
             top_domains: Mutex::new(HashMap::new()),
             top_blocked: Mutex::new(HashMap::new()),
             series: Mutex::new(Series::new()),
+            latencies: Mutex::new(VecDeque::with_capacity(LATENCY_CAPACITY)),
             started: Instant::now(),
             started_at: OffsetDateTime::now_utc().format(&Rfc3339).unwrap_or_default(),
         }
@@ -200,6 +207,9 @@ impl Stats {
             }
             QueryOutcome::Forwarded => {
                 self.counters.forwarded.fetch_add(1, Ordering::Relaxed);
+            }
+            QueryOutcome::Cached => {
+                self.counters.cached.fetch_add(1, Ordering::Relaxed);
             }
             QueryOutcome::NxDomain => {
                 self.counters.nxdomain.fetch_add(1, Ordering::Relaxed);
@@ -262,6 +272,41 @@ impl Stats {
         Some(entry)
     }
 
+    /// Record a query's end-to-end resolution latency.
+    pub fn record_latency(&self, d: std::time::Duration) {
+        let us = d.as_micros().min(u64::MAX as u128) as u64;
+        let mut l = self.latencies.lock();
+        if l.len() == LATENCY_CAPACITY {
+            l.pop_front();
+        }
+        l.push_back(us);
+    }
+
+    /// min/avg/median/max latency in milliseconds over the recent window.
+    fn latency_stats(&self) -> serde_json::Value {
+        let mut v: Vec<u64> = self.latencies.lock().iter().copied().collect();
+        if v.is_empty() {
+            return json!({ "count": 0, "min_ms": 0.0, "avg_ms": 0.0, "median_ms": 0.0, "max_ms": 0.0 });
+        }
+        v.sort_unstable();
+        let n = v.len();
+        let to_ms = |us: u64| (us as f64 / 1000.0 * 100.0).round() / 100.0;
+        let sum: u128 = v.iter().map(|&x| x as u128).sum();
+        let avg_us = (sum / n as u128) as u64;
+        let median_us = if n % 2 == 1 {
+            v[n / 2]
+        } else {
+            (v[n / 2 - 1] + v[n / 2]) / 2
+        };
+        json!({
+            "count": n,
+            "min_ms": to_ms(v[0]),
+            "avg_ms": to_ms(avg_us),
+            "median_ms": to_ms(median_us),
+            "max_ms": to_ms(v[n - 1]),
+        })
+    }
+
     /// Clear retained per-query detail (recent queries + top domains).
     pub fn clear_log(&self) {
         self.recent.lock().clear();
@@ -284,7 +329,7 @@ impl Stats {
             "total": total,
             "authoritative": self.counters.authoritative.load(Ordering::Relaxed),
             "forwarded": self.counters.forwarded.load(Ordering::Relaxed),
-            "cached": 0,
+            "cached": self.counters.cached.load(Ordering::Relaxed),
             "nxdomain": self.counters.nxdomain.load(Ordering::Relaxed),
             "refused": self.counters.refused.load(Ordering::Relaxed),
             "servfail": self.counters.servfail.load(Ordering::Relaxed),
@@ -294,6 +339,7 @@ impl Stats {
             "qps_10s": (qps_10s * 100.0).round() / 100.0,
             "qps_1m": (qps_1m * 100.0).round() / 100.0,
             "qps_avg": (total as f64 / uptime as f64 * 100.0).round() / 100.0,
+            "latency": self.latency_stats(),
             "series_per_sec": series,
             "recent": recent,
             "top_domains": top_n(&self.top_domains.lock()),
@@ -324,6 +370,7 @@ impl Stats {
         for (label, val) in [
             ("authoritative", c.authoritative.load(Ordering::Relaxed)),
             ("forwarded", c.forwarded.load(Ordering::Relaxed)),
+            ("cached", c.cached.load(Ordering::Relaxed)),
             ("nxdomain", c.nxdomain.load(Ordering::Relaxed)),
             ("refused", c.refused.load(Ordering::Relaxed)),
             ("servfail", c.servfail.load(Ordering::Relaxed)),

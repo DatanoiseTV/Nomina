@@ -36,6 +36,7 @@ pub async fn resolve_query(
     client: IpAddr,
     dnssec_ok: bool,
 ) -> ResolveOutput {
+    let started = std::time::Instant::now();
     let recursion_available = state.upstream().is_some();
     let store = state.store();
 
@@ -119,6 +120,7 @@ pub async fn resolve_query(
     ) {
         state.log_query(entry);
     }
+    state.stats.record_latency(started.elapsed());
     out
 }
 
@@ -240,7 +242,23 @@ async fn resolve_external(
 
     match state.upstream() {
         Some(up) => {
+            let cache = state.cache();
+            let now = std::time::Instant::now();
+            // Serve hot names from the edge cache, skipping the upstream round-trip.
+            if let Some(c) = cache.get(qname, qtype, now) {
+                return (
+                    ResolveOutput {
+                        answers: c.answers,
+                        authority: c.authority,
+                        rcode: c.rcode,
+                        authoritative: false,
+                        recursion_available,
+                    },
+                    QueryOutcome::Cached,
+                );
+            }
             let r = up.resolve(qname, qtype).await;
+            cache.put(qname, qtype, &r.answers, &r.authority, r.rcode, now);
             let stat = match r.rcode {
                 ResponseCode::NXDomain => QueryOutcome::NxDomain,
                 ResponseCode::ServFail => QueryOutcome::ServFail,

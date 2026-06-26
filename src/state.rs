@@ -8,6 +8,7 @@ use parking_lot::{Mutex, RwLock};
 
 use crate::config::Config;
 use crate::db::Db;
+use crate::dns::cache::DnsCache;
 use crate::dns::conditional::ConditionalSet;
 use crate::dns::upstream::Upstream;
 use crate::filter::FilterSet;
@@ -32,6 +33,7 @@ pub struct AppState {
     upstream: RwLock<Option<Arc<Upstream>>>,
     conditional: RwLock<Arc<ConditionalSet>>,
     filter: RwLock<Arc<FilterSet>>,
+    cache: RwLock<Arc<DnsCache>>,
     settings: RwLock<Settings>,
     throttle: Mutex<LoginThrottle>,
     qlog_tx: tokio::sync::mpsc::Sender<crate::stats::RecentQuery>,
@@ -57,6 +59,11 @@ impl AppState {
             upstream: RwLock::new(upstream.map(Arc::new)),
             conditional: RwLock::new(Arc::new(conditional)),
             filter: RwLock::new(Arc::new(filter)),
+            cache: RwLock::new(Arc::new(DnsCache::new(
+                settings.cache_size as usize,
+                settings.cache_min_ttl,
+                settings.cache_max_ttl,
+            ))),
             settings: RwLock::new(settings),
             throttle: Mutex::new(LoginThrottle::default()),
             qlog_tx,
@@ -95,6 +102,11 @@ impl AppState {
     /// Snapshot the current filter set.
     pub fn filter(&self) -> Arc<FilterSet> {
         self.filter.read().clone()
+    }
+
+    /// Snapshot the current upstream answer cache.
+    pub fn cache(&self) -> Arc<DnsCache> {
+        self.cache.read().clone()
     }
 
     pub fn block_mode(&self) -> BlockMode {
@@ -173,6 +185,12 @@ impl AppState {
         if let Err(e) = self.reload_conditional() {
             tracing::error!("failed to reload conditional forwarders: {e}");
         }
+        // Rebuild the edge cache so changed size/TTL bounds take effect.
+        *self.cache.write() = Arc::new(DnsCache::new(
+            settings.cache_size as usize,
+            settings.cache_min_ttl,
+            settings.cache_max_ttl,
+        ));
     }
 
     // ----- login throttling -----------------------------------------------

@@ -2,6 +2,7 @@
 //! core, the DoH endpoint, and socket bootstrap.
 
 pub mod axfr;
+pub mod cache;
 pub mod conditional;
 pub mod dnssec;
 pub mod doh;

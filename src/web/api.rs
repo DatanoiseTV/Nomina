@@ -109,8 +109,19 @@ pub async fn status(State(state): State<SharedState>, _auth: Authed) -> ApiResul
 
 pub async fn stats(State(state): State<SharedState>, _auth: Authed) -> Response {
     let mut snap = state.stats.snapshot();
+    let (hits, misses, size) = state.cache().stats(std::time::Instant::now());
+    let lookups = hits + misses;
+    let hit_rate = if lookups > 0 {
+        (hits as f64 / lookups as f64 * 1000.0).round() / 1000.0
+    } else {
+        0.0
+    };
     if let Some(obj) = snap.as_object_mut() {
         obj.insert("query_log".into(), json!(state.query_log()));
+        obj.insert(
+            "cache".into(),
+            json!({ "hits": hits, "misses": misses, "size": size, "hit_rate": hit_rate }),
+        );
     }
     ok_json(snap)
 }
@@ -118,6 +129,7 @@ pub async fn stats(State(state): State<SharedState>, _auth: Authed) -> Response 
 /// Clear retained per-query detail (recent queries + top domains).
 pub async fn clear_stats(State(state): State<SharedState>, _auth: Authed) -> Response {
     state.stats.clear_log();
+    state.cache().clear();
     StatusCode::NO_CONTENT.into_response()
 }
 
