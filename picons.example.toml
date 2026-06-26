@@ -1,0 +1,52 @@
+# PicoNS configuration (TOML). All values shown are defaults unless noted.
+# Copy to picons.toml and pass with `--config picons.toml`.
+#
+# Listen sockets, TLS, and privilege settings live here (changing them needs a
+# restart). Zones, records, views, forwarders, blocklists, rules and rewrites are
+# managed at runtime through the web UI / API and stored in the database.
+
+# Directory for the database and the generated self-signed TLS certificate.
+data_dir = "./data"
+
+# Optional explicit database path (defaults to <data_dir>/picons.db).
+# database_path = "/var/lib/picons/picons.db"
+
+# tracing log filter, e.g. "info", "picons=debug,warn".
+log = "info"
+
+[dns]
+# Plain DNS (UDP + TCP). Bind to specific IPs to control reachability, e.g.
+# ["192.168.1.2:53"] to serve only on one interface, or both v4 and v6.
+listen = ["0.0.0.0:53"]
+# DNS-over-TLS (RFC 7858). Requires TLS material. Empty = disabled.
+dot_listen = []        # e.g. ["0.0.0.0:853"]
+# DNS-over-HTTPS (RFC 8484, GET + POST). Requires TLS material. Empty = disabled.
+doh_listen = []        # e.g. ["0.0.0.0:443"]
+doh_path = "/dns-query"
+tcp_timeout_secs = 10
+
+[web]
+# Management UI + API. Bind to a LAN/loopback IP to keep it off the public net,
+# e.g. "127.0.0.1:8053" or "192.168.1.2:8053".
+listen = "0.0.0.0:8053"
+# Serve the management interface (and co-located DoH) over HTTPS.
+tls = false
+# Disable the management interface entirely (DNS-only deployment).
+disabled = false
+# Optional CIDR allow-list for the management server (defense-in-depth on top of
+# the bind address). Empty = allow all that can reach the socket.
+allow_networks = []    # e.g. ["192.168.0.0/16", "10.0.0.0/8"]
+
+[tls]
+# Provide your own certificate, or leave unset to auto-generate a self-signed one
+# under data_dir (shared by the web UI, DoT, and DoH).
+# cert_path = "/etc/picons/cert.pem"
+# key_path  = "/etc/picons/key.pem"
+hostname = "picons.local"
+auto_self_signed = true
+
+[privileges]
+# Bind privileged ports as root, then drop to this user/group. Only effective
+# when started as root on Unix. The data_dir must be writable by this user.
+# user = "picons"
+# group = "picons"
