@@ -131,12 +131,14 @@ async fn main() -> anyhow::Result<()> {
         }
     };
     let filter = FilterSet::load(&db, settings.blocking_enabled)?;
+    let conditional = dns::conditional::ConditionalSet::load(&db, &settings)?;
 
     let state: SharedState = Arc::new(AppState::new(
         db,
         config.clone(),
         store,
         upstream,
+        conditional,
         filter,
         settings.clone(),
     ));

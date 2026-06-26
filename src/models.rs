@@ -296,6 +296,18 @@ pub struct Rewrite {
     pub created_at: String,
 }
 
+/// A conditional forwarder: queries under `domain` (and its subdomains) are
+/// forwarded to a dedicated set of upstreams instead of the global resolver.
+/// e.g. `corp.internal` -> 10.0.0.1, `consul` -> 127.0.0.1:8600.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConditionalForward {
+    pub id: i64,
+    pub domain: String,
+    pub forwarders: Vec<Forwarder>,
+    pub enabled: bool,
+    pub created_at: String,
+}
+
 /// Does `pattern` (a domain, optionally `*.`-prefixed) cover `name`? Matches the
 /// domain itself and all subdomains. Both inputs must be lowercase, no trailing
 /// dot.

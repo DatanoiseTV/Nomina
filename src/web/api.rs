@@ -83,6 +83,7 @@ pub async fn status(State(state): State<SharedState>, _auth: Authed) -> ApiResul
         "resolution_mode": state.resolution_mode(),
         "blocked_domains": filter.blocked_count(),
         "rewrite_count": filter.rewrite_count(),
+        "conditional_forward_count": state.conditional().len(),
     })))
 }
 
@@ -542,6 +543,78 @@ pub async fn export_zone(
         out,
     )
         .into_response())
+}
+
+#[derive(Deserialize)]
+pub struct ZoneImport {
+    zonefile: String,
+    #[serde(default)]
+    replace: bool,
+}
+
+/// Import a BIND-style zone file into an existing zone. SOA and unsupported
+/// types are skipped. Records are added to the all-views set.
+pub async fn import_zone(
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+    _auth: Authed,
+    Json(req): Json<ZoneImport>,
+) -> ApiResult<Response> {
+    let zone = state
+        .db
+        .run(move |c| Db::zone(c, id))
+        .await?
+        .ok_or_else(|| AppError::not_found("zone not found"))?;
+
+    let origin = hickory_proto::rr::Name::from_utf8(format!("{}.", zone.name))
+        .map_err(|e| validation_field("zonefile", &format!("bad origin: {e}")))?;
+
+    let (records, skipped) = parse_zonefile(&req.zonefile, &origin, &zone.name)
+        .map_err(|e| validation_field("zonefile", &e))?;
+
+    let replace = req.replace;
+    let imported = state
+        .db
+        .run_mut(move |c| Db::import_records(c, id, replace, &records))
+        .await?;
+    state.reload_store()?;
+    Ok(ok_json(json!({ "imported": imported, "skipped": skipped })))
+}
+
+/// Parse a zone file into `(name, rtype, ttl, data)` tuples for supported types.
+fn parse_zonefile(
+    text: &str,
+    origin: &hickory_proto::rr::Name,
+    zone: &str,
+) -> Result<(Vec<(String, String, u32, String)>, usize), String> {
+    use hickory_proto::serialize::txt::Parser;
+    let (_zone_origin, rrsets) = Parser::new(text.to_string(), None, Some(origin.clone()))
+        .parse()
+        .map_err(|e| format!("parse error: {e}"))?;
+
+    let zone_lc = zone.trim_end_matches('.').to_ascii_lowercase();
+    let mut out = Vec::new();
+    let mut skipped = 0usize;
+    for (_key, rrset) in rrsets {
+        for rec in rrset.records_without_rrsigs() {
+            let rtype = rec.record_type().to_string();
+            if !SUPPORTED_RECORD_TYPES.contains(&rtype.as_str()) {
+                skipped += 1;
+                continue;
+            }
+            let fqdn = rec.name.to_string();
+            let f = fqdn.trim_end_matches('.').to_ascii_lowercase();
+            let name = if f == zone_lc {
+                "@".to_string()
+            } else if let Some(rel) = f.strip_suffix(&format!(".{zone_lc}")) {
+                rel.to_string()
+            } else {
+                f
+            };
+            out.push((name, rtype, rec.ttl, rec.data.to_string()));
+        }
+    }
+    Ok((out, skipped))
 }
 
 // ---------------------------------------------------------------------------
@@ -1013,6 +1086,96 @@ pub async fn delete_rewrite(
 ) -> ApiResult<Response> {
     state.db.run(move |c| Db::delete_rewrite(c, id)).await?;
     state.reload_filter()?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+// ---------------------------------------------------------------------------
+// Conditional forwarders
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct ConditionalCreate {
+    domain: String,
+    forwarders: Vec<Forwarder>,
+}
+
+#[derive(Deserialize)]
+pub struct ConditionalUpdate {
+    forwarders: Option<Vec<Forwarder>>,
+    enabled: Option<bool>,
+}
+
+fn validate_forwarders(forwarders: &[Forwarder]) -> Result<(), AppError> {
+    if forwarders.is_empty() {
+        return Err(validation_field("forwarders", "at least one forwarder required"));
+    }
+    for f in forwarders {
+        f.addr
+            .parse::<std::net::IpAddr>()
+            .map_err(|_| validation_field("forwarders", &format!("invalid address: {}", f.addr)))?;
+        if matches!(f.protocol, ForwardProtocol::Tls | ForwardProtocol::Https)
+            && f.tls_name.as_deref().unwrap_or("").is_empty()
+        {
+            return Err(validation_field(
+                "forwarders",
+                "tls/https forwarders require tls_name",
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub async fn list_conditional(State(state): State<SharedState>, _auth: Authed) -> ApiResult<Response> {
+    let items = state.db.run(Db::list_conditional_forwards).await?;
+    Ok(ok_json(json!({ "conditional_forwards": items })))
+}
+
+pub async fn create_conditional(
+    State(state): State<SharedState>,
+    _auth: Authed,
+    Json(req): Json<ConditionalCreate>,
+) -> ApiResult<Response> {
+    let domain = normalize_domain(&req.domain)?;
+    validate_forwarders(&req.forwarders)?;
+    let fwds = req.forwarders.clone();
+    let id = state
+        .db
+        .run(move |c| Db::create_conditional_forward(c, &domain, &fwds))
+        .await?;
+    state.reload_conditional()?;
+    let item = state.db.run(move |c| Db::conditional_forward(c, id)).await?;
+    Ok(created_json(json!({ "conditional_forward": item })))
+}
+
+pub async fn update_conditional(
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+    _auth: Authed,
+    Json(req): Json<ConditionalUpdate>,
+) -> ApiResult<Response> {
+    if let Some(f) = &req.forwarders {
+        validate_forwarders(f)?;
+    }
+    let fwds = req.forwarders.clone();
+    state
+        .db
+        .run(move |c| Db::update_conditional_forward(c, id, fwds.as_deref(), req.enabled))
+        .await?;
+    state.reload_conditional()?;
+    let item = state.db.run(move |c| Db::conditional_forward(c, id)).await?;
+    Ok(ok_json(json!({ "conditional_forward": item })))
+}
+
+pub async fn delete_conditional(
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+    _auth: Authed,
+) -> ApiResult<Response> {
+    state
+        .db
+        .run(move |c| Db::delete_conditional_forward(c, id))
+        .await?;
+    state.reload_conditional()?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 

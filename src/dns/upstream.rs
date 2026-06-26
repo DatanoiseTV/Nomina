@@ -14,7 +14,7 @@ use hickory_resolver::net::runtime::TokioRuntimeProvider;
 use hickory_resolver::net::{DnsError, NetError};
 use hickory_resolver::recursor::{Recursor, RecursorOptions};
 
-use crate::models::{ForwardProtocol, ResolutionMode, Settings, ROOT_SERVERS};
+use crate::models::{ForwardProtocol, Forwarder, ResolutionMode, Settings, ROOT_SERVERS};
 
 /// The result of resolving a query upstream.
 pub struct UpstreamResult {
@@ -36,7 +36,10 @@ impl Upstream {
     pub fn build(settings: &Settings) -> anyhow::Result<Option<Self>> {
         match settings.resolution_mode {
             ResolutionMode::Off => Ok(None),
-            ResolutionMode::Forward => Ok(Some(Upstream::Forward(build_forwarder(settings)?))),
+            ResolutionMode::Forward => Ok(Some(Upstream::Forward(build_forward_resolver(
+                &settings.forwarders,
+                settings,
+            )?))),
             ResolutionMode::Recursive => {
                 let roots: Vec<IpAddr> = ROOT_SERVERS
                     .iter()
@@ -122,10 +125,14 @@ impl Upstream {
     }
 }
 
-/// Build a forwarding stub resolver from the configured upstreams.
-fn build_forwarder(settings: &Settings) -> anyhow::Result<TokioResolver> {
+/// Build a forwarding stub resolver from an explicit set of upstreams (used by
+/// both the global forwarder and per-domain conditional forwarders).
+pub fn build_forward_resolver(
+    forwarders: &[Forwarder],
+    settings: &Settings,
+) -> anyhow::Result<TokioResolver> {
     let mut name_servers = Vec::new();
-    for f in &settings.forwarders {
+    for f in forwarders {
         let ip: IpAddr = match f.addr.parse() {
             Ok(ip) => ip,
             Err(e) => {

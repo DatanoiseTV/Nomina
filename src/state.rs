@@ -8,6 +8,7 @@ use parking_lot::{Mutex, RwLock};
 
 use crate::config::Config;
 use crate::db::Db;
+use crate::dns::conditional::ConditionalSet;
 use crate::dns::upstream::Upstream;
 use crate::filter::FilterSet;
 use crate::models::{BlockMode, ResolutionMode, Settings};
@@ -29,6 +30,7 @@ pub struct AppState {
     pub stats: Arc<Stats>,
     store: RwLock<Arc<ZoneStore>>,
     upstream: RwLock<Option<Arc<Upstream>>>,
+    conditional: RwLock<Arc<ConditionalSet>>,
     filter: RwLock<Arc<FilterSet>>,
     settings: RwLock<Settings>,
     throttle: Mutex<LoginThrottle>,
@@ -40,6 +42,7 @@ impl AppState {
         config: Arc<Config>,
         store: ZoneStore,
         upstream: Option<Upstream>,
+        conditional: ConditionalSet,
         filter: FilterSet,
         settings: Settings,
     ) -> Self {
@@ -49,6 +52,7 @@ impl AppState {
             stats: Arc::new(Stats::new()),
             store: RwLock::new(Arc::new(store)),
             upstream: RwLock::new(upstream.map(Arc::new)),
+            conditional: RwLock::new(Arc::new(conditional)),
             filter: RwLock::new(Arc::new(filter)),
             settings: RwLock::new(settings),
             throttle: Mutex::new(LoginThrottle::default()),
@@ -63,6 +67,19 @@ impl AppState {
     /// Snapshot the current upstream resolver, if resolution is enabled.
     pub fn upstream(&self) -> Option<Arc<Upstream>> {
         self.upstream.read().clone()
+    }
+
+    /// Snapshot the current conditional-forwarding set.
+    pub fn conditional(&self) -> Arc<ConditionalSet> {
+        self.conditional.read().clone()
+    }
+
+    /// Rebuild conditional forwarders from the database.
+    pub fn reload_conditional(&self) -> anyhow::Result<()> {
+        let settings = self.settings.read().clone();
+        let set = ConditionalSet::load(&self.db, &settings)?;
+        *self.conditional.write() = Arc::new(set);
+        Ok(())
     }
 
     /// Snapshot the current filter set.
@@ -120,6 +137,9 @@ impl AppState {
         }
         if let Err(e) = self.reload_filter() {
             tracing::error!("failed to reload filter: {e}");
+        }
+        if let Err(e) = self.reload_conditional() {
+            tracing::error!("failed to reload conditional forwarders: {e}");
         }
     }
 

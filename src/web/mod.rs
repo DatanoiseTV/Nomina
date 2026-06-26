@@ -62,6 +62,7 @@ pub fn router(state: SharedState) -> Router {
             get(api::list_records).post(api::create_record),
         )
         .route("/api/zones/{id}/export", get(api::export_zone))
+        .route("/api/zones/{id}/import", post(api::import_zone))
         .route(
             "/api/records/{id}",
             put(api::update_record).delete(api::delete_record),
@@ -83,6 +84,14 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/api/rewrites/{id}",
             put(api::update_rewrite).delete(api::delete_rewrite),
+        )
+        .route(
+            "/api/conditional-forwards",
+            get(api::list_conditional).post(api::create_conditional),
+        )
+        .route(
+            "/api/conditional-forwards/{id}",
+            put(api::update_conditional).delete(api::delete_conditional),
         );
 
     // Optional CIDR allow-list for the whole management server.

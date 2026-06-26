@@ -108,6 +108,14 @@ CREATE TABLE IF NOT EXISTS rewrites (
     comment    TEXT,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS conditional_forwards (
+    id         INTEGER PRIMARY KEY,
+    domain     TEXT NOT NULL UNIQUE,
+    forwarders TEXT NOT NULL,
+    enabled    INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL
+);
 "#;
 
 #[derive(Clone)]
@@ -603,6 +611,39 @@ impl Db {
         Ok(zone_id)
     }
 
+    /// Bulk-insert imported records into a zone within one transaction.
+    /// `records` is `(name, rtype, ttl, data)`. Optionally replaces existing
+    /// records first. Returns the number inserted.
+    pub fn import_records(
+        conn: &mut Connection,
+        zone_id: i64,
+        replace: bool,
+        records: &[(String, String, u32, String)],
+    ) -> rusqlite::Result<usize> {
+        let ts = now();
+        let tx = conn.transaction()?;
+        if replace {
+            tx.execute("DELETE FROM records WHERE zone_id = ?1", params![zone_id])?;
+        }
+        let mut count = 0;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO records (zone_id, view_id, name, rtype, ttl, data, enabled, created_at, updated_at)
+                 VALUES (?1, NULL, ?2, ?3, ?4, ?5, 1, ?6, ?6)",
+            )?;
+            for (name, rtype, ttl, data) in records {
+                stmt.execute(params![zone_id, name, rtype, ttl, data, ts])?;
+                count += 1;
+            }
+        }
+        tx.execute(
+            "UPDATE zones SET serial = serial + 1, updated_at = ?1 WHERE id = ?2",
+            params![ts, zone_id],
+        )?;
+        tx.commit()?;
+        Ok(count)
+    }
+
     fn map_record(r: &rusqlite::Row, zone_name: &str) -> rusqlite::Result<DnsRecord> {
         let name: String = r.get(3)?;
         let fqdn = record_fqdn_string(&name, zone_name);
@@ -875,6 +916,87 @@ impl Db {
             enabled: r.get::<_, i64>(3)? != 0,
             comment: r.get(4)?,
             created_at: r.get(5)?,
+        })
+    }
+
+    // ----- conditional forwards -------------------------------------------
+
+    pub fn list_conditional_forwards(
+        conn: &Connection,
+    ) -> rusqlite::Result<Vec<ConditionalForward>> {
+        let mut stmt = conn.prepare(
+            "SELECT id, domain, forwarders, enabled, created_at
+             FROM conditional_forwards ORDER BY domain ASC",
+        )?;
+        let rows = stmt
+            .query_map([], Self::map_conditional)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn conditional_forward(
+        conn: &Connection,
+        id: i64,
+    ) -> rusqlite::Result<Option<ConditionalForward>> {
+        conn.query_row(
+            "SELECT id, domain, forwarders, enabled, created_at
+             FROM conditional_forwards WHERE id = ?1",
+            params![id],
+            Self::map_conditional,
+        )
+        .optional()
+    }
+
+    pub fn create_conditional_forward(
+        conn: &Connection,
+        domain: &str,
+        forwarders: &[Forwarder],
+    ) -> rusqlite::Result<i64> {
+        let json = serde_json::to_string(forwarders).map_err(json_err)?;
+        conn.execute(
+            "INSERT INTO conditional_forwards (domain, forwarders, enabled, created_at)
+             VALUES (?1, ?2, 1, ?3)",
+            params![domain, json, now()],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn update_conditional_forward(
+        conn: &Connection,
+        id: i64,
+        forwarders: Option<&[Forwarder]>,
+        enabled: Option<bool>,
+    ) -> rusqlite::Result<()> {
+        if let Some(f) = forwarders {
+            let json = serde_json::to_string(f).map_err(json_err)?;
+            conn.execute(
+                "UPDATE conditional_forwards SET forwarders = ?1 WHERE id = ?2",
+                params![json, id],
+            )?;
+        }
+        if let Some(e) = enabled {
+            conn.execute(
+                "UPDATE conditional_forwards SET enabled = ?1 WHERE id = ?2",
+                params![e as i64, id],
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn delete_conditional_forward(conn: &Connection, id: i64) -> rusqlite::Result<()> {
+        conn.execute("DELETE FROM conditional_forwards WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    fn map_conditional(r: &rusqlite::Row) -> rusqlite::Result<ConditionalForward> {
+        let json: String = r.get(2)?;
+        let forwarders: Vec<Forwarder> = serde_json::from_str(&json).map_err(json_err)?;
+        Ok(ConditionalForward {
+            id: r.get(0)?,
+            domain: r.get(1)?,
+            forwarders,
+            enabled: r.get::<_, i64>(3)? != 0,
+            created_at: r.get(4)?,
         })
     }
 }

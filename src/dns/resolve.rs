@@ -96,6 +96,27 @@ async fn resolve_external(
         Decision::Allow | Decision::Pass => {}
     }
 
+    // Conditional forwarding: a per-domain upstream takes precedence over the
+    // global resolver (and works even in authoritative-only mode).
+    if let Some(up) = state.conditional().match_for(&key) {
+        let r = up.resolve(qname, qtype).await;
+        let stat = match r.rcode {
+            ResponseCode::NXDomain => QueryOutcome::NxDomain,
+            ResponseCode::ServFail => QueryOutcome::ServFail,
+            _ => QueryOutcome::Forwarded,
+        };
+        return (
+            ResolveOutput {
+                answers: r.answers,
+                authority: r.authority,
+                rcode: r.rcode,
+                authoritative: false,
+                recursion_available: true,
+            },
+            stat,
+        );
+    }
+
     match state.upstream() {
         Some(up) => {
             let r = up.resolve(qname, qtype).await;

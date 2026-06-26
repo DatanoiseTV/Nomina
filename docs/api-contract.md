@@ -279,8 +279,32 @@ authoritative-only mode):
 - `PUT /api/rewrites/:id` body `{ "domain"?,"target"?,"enabled"? }` → `200 { "rewrite": Rewrite }`
 - `DELETE /api/rewrites/:id` → `204`
 
+`ConditionalForward` (per-domain upstreams; queries under `domain` + subdomains go
+to dedicated forwarders, taking precedence over the global resolver and working
+even in authoritative-only mode):
+```json
+{ "id": 1, "domain": "corp.internal",
+  "forwarders": [ { "addr": "10.0.0.1", "protocol": "udp", "port": 53, "tls_name": null } ],
+  "enabled": true, "created_at": "..." }
+```
+- `GET /api/conditional-forwards` → `200 { "conditional_forwards": [ConditionalForward] }`
+- `POST /api/conditional-forwards` body `{ "domain","forwarders":[Forwarder] }` → `201 { "conditional_forward": ... }`
+- `PUT /api/conditional-forwards/:id` body `{ "forwarders"?, "enabled"? }` → `200 { "conditional_forward": ... }`
+- `DELETE /api/conditional-forwards/:id` → `204`
+
 Precedence on a query: **local authoritative zones → rewrite → allow rule → block
-(blocklist/deny rule) → upstream (forward/recursive) → REFUSED (off mode)**.
+(blocklist/deny rule) → conditional forward → global upstream (forward/recursive)
+→ REFUSED (off mode)**.
+
+`GET /api/status` additionally returns `conditional_forward_count`.
+
+### Zone import
+
+`POST /api/zones/:id/import` body `{ "zonefile": "<BIND master file text>", "replace"?: bool }`
+→ `200 { "imported": N, "skipped": M }`. Parses a BIND-style zone file (with
+`$ORIGIN`/`$TTL`), adds supported records to the all-views set, and skips SOA and
+unsupported types. `replace: true` clears the zone's existing records first.
+Pairs with `GET /api/zones/:id/export`.
 
 `GET /api/status` additionally returns: `resolution_mode`, `blocked_domains`
 (count), `rewrite_count`, `active_zone_count`.
