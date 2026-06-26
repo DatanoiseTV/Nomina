@@ -56,6 +56,23 @@ pub async fn resolve_query(
         }
     }
 
+    // Apex NSEC3PARAM is synthesized from the zone's NSEC3 parameters.
+    if dnssec_ok && qtype == RecordType::NSEC3PARAM {
+        if let Some(signer) = store.signer_for(qname) {
+            if signer.uses_nsec3() && same_name(qname, &signer.apex) {
+                let out = ResolveOutput {
+                    answers: signer.nsec3param_rrset(),
+                    authority: vec![],
+                    rcode: ResponseCode::NoError,
+                    authoritative: true,
+                    recursion_available,
+                };
+                record_stat(state, client, None, qname, qtype, QueryOutcome::Authoritative, &out);
+                return out;
+            }
+        }
+    }
+
     let result = store.lookup(qname, qtype, client);
     let view = result.view_name.clone();
     let outcome = result.outcome;
@@ -129,8 +146,16 @@ fn record_stat(
     );
 }
 
-/// Sign authoritative answers, or prove a denial (black-lies NSEC), on a signed
-/// zone.
+/// A signed denial proof for `owner`, using NSEC3 when the zone enables it.
+fn denial(signer: &ZoneSigner, owner: &Name, present: &[RecordType], ttl: u32) -> Vec<Record> {
+    if signer.uses_nsec3() {
+        signer.nsec3_records(owner, present, ttl)
+    } else {
+        signer.nsec_records(owner, present, ttl)
+    }
+}
+
+/// Sign authoritative answers, or prove a denial (NSEC/NSEC3), on a signed zone.
 fn apply_dnssec(
     signer: &ZoneSigner,
     store: &ZoneStore,
@@ -144,14 +169,14 @@ fn apply_dnssec(
             let ttl = out.authority.first().map(|r| r.ttl).unwrap_or(60);
             signer.sign_records(&mut out.authority);
             let present = store.present_types(qname);
-            out.authority.extend(signer.nsec_records(qname, &present, ttl));
+            out.authority.extend(denial(signer, qname, &present, ttl));
         }
         Outcome::NxDomain => {
-            // Black lie: return NOERROR with a signed NSEC denying the name.
+            // Black lie: return NOERROR with a signed NSEC/NSEC3 denying the name.
             out.rcode = ResponseCode::NoError;
             let ttl = out.authority.first().map(|r| r.ttl).unwrap_or(60);
             signer.sign_records(&mut out.authority);
-            out.authority.extend(signer.nsec_records(qname, &[], ttl));
+            out.authority.extend(denial(signer, qname, &[], ttl));
         }
         Outcome::NotAuthoritative => {}
     }

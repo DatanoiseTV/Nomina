@@ -122,6 +122,9 @@ CREATE TABLE IF NOT EXISTS dnssec_keys (
     zone_id    INTEGER PRIMARY KEY REFERENCES zones(id) ON DELETE CASCADE,
     algorithm  INTEGER NOT NULL,
     secret     TEXT NOT NULL,
+    nsec3      INTEGER NOT NULL DEFAULT 0,
+    salt       TEXT,
+    iterations INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
 );
 
@@ -138,7 +141,12 @@ CREATE TABLE IF NOT EXISTS secondary_zones (
 "#;
 
 /// Idempotent column additions for databases created by older versions.
-const MIGRATIONS: &[&str] = &["ALTER TABLE secondary_zones ADD COLUMN tsig_key TEXT"];
+const MIGRATIONS: &[&str] = &[
+    "ALTER TABLE secondary_zones ADD COLUMN tsig_key TEXT",
+    "ALTER TABLE dnssec_keys ADD COLUMN nsec3 INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE dnssec_keys ADD COLUMN salt TEXT",
+    "ALTER TABLE dnssec_keys ADD COLUMN iterations INTEGER NOT NULL DEFAULT 0",
+];
 
 #[derive(Clone)]
 pub struct Db {
@@ -1045,22 +1053,37 @@ impl Db {
         zone_id: i64,
         algorithm: i64,
         secret: &str,
+        nsec3: bool,
+        salt_hex: Option<&str>,
+        iterations: i64,
     ) -> rusqlite::Result<()> {
         conn.execute(
-            "INSERT INTO dnssec_keys (zone_id, algorithm, secret, created_at)
-             VALUES (?1, ?2, ?3, ?4)
+            "INSERT INTO dnssec_keys (zone_id, algorithm, secret, nsec3, salt, iterations, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(zone_id) DO UPDATE SET algorithm = excluded.algorithm,
-                 secret = excluded.secret, created_at = excluded.created_at",
-            params![zone_id, algorithm, secret, now()],
+                 secret = excluded.secret, nsec3 = excluded.nsec3, salt = excluded.salt,
+                 iterations = excluded.iterations, created_at = excluded.created_at",
+            params![zone_id, algorithm, secret, nsec3 as i64, salt_hex, iterations, now()],
         )?;
         Ok(())
     }
 
-    pub fn dnssec_secret(conn: &Connection, zone_id: i64) -> rusqlite::Result<Option<String>> {
+    /// Returns `(secret_b64, nsec3, salt_hex, iterations)` for a signed zone.
+    pub fn dnssec_config(
+        conn: &Connection,
+        zone_id: i64,
+    ) -> rusqlite::Result<Option<(String, bool, Option<String>, u16)>> {
         conn.query_row(
-            "SELECT secret FROM dnssec_keys WHERE zone_id = ?1",
+            "SELECT secret, nsec3, salt, iterations FROM dnssec_keys WHERE zone_id = ?1",
             params![zone_id],
-            |r| r.get(0),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)? != 0,
+                    r.get::<_, Option<String>>(2)?,
+                    r.get::<_, i64>(3)? as u16,
+                ))
+            },
         )
         .optional()
     }

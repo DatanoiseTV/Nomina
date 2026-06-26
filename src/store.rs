@@ -15,7 +15,7 @@ use ipnet::IpNet;
 use tracing::warn;
 
 use crate::db::Db;
-use crate::dns::dnssec::ZoneSigner;
+use crate::dns::dnssec::{Nsec3Params, ZoneSigner};
 use crate::models::{parse_rdata, record_fqdn_name, soa_rname};
 
 /// A resolved split-horizon view with its parsed CIDR set.
@@ -140,14 +140,25 @@ impl ZoneStore {
                 z.soa.minimum,
             );
 
-            let signer = match Db::dnssec_secret(conn, z.id) {
-                Ok(Some(secret)) => match ZoneSigner::build(apex.clone(), z.default_ttl, &secret) {
-                    Ok(s) => Some(Arc::new(s)),
-                    Err(e) => {
-                        warn!(zone = %z.name, "DNSSEC disabled (key error): {e}");
+            let signer = match Db::dnssec_config(conn, z.id) {
+                Ok(Some((secret, nsec3, salt_hex, iterations))) => {
+                    let nsec3_params = if nsec3 {
+                        let salt = salt_hex
+                            .as_deref()
+                            .and_then(|h| data_encoding::HEXLOWER_PERMISSIVE.decode(h.as_bytes()).ok())
+                            .unwrap_or_default();
+                        Some(Nsec3Params { salt, iterations })
+                    } else {
                         None
+                    };
+                    match ZoneSigner::build(apex.clone(), z.default_ttl, &secret, nsec3_params) {
+                        Ok(s) => Some(Arc::new(s)),
+                        Err(e) => {
+                            warn!(zone = %z.name, "DNSSEC disabled (key error): {e}");
+                            None
+                        }
                     }
-                },
+                }
                 _ => None,
             };
 

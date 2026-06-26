@@ -736,9 +736,16 @@ async fn dnssec_status(state: &SharedState, zone_name: &str) -> ApiResult<Respon
             "key_tag": signer.key_tag(),
             "dnskey": signer.dnskey_text(),
             "ds": signer.ds_text().ok(),
+            "nsec3": signer.uses_nsec3(),
         }))),
         None => Ok(ok_json(json!({ "enabled": false }))),
     }
+}
+
+#[derive(Deserialize, Default)]
+pub struct DnssecEnable {
+    #[serde(default)]
+    nsec3: bool,
 }
 
 pub async fn get_dnssec(
@@ -758,18 +765,32 @@ pub async fn enable_dnssec(
     State(state): State<SharedState>,
     Path(id): Path<i64>,
     _auth: Authed,
+    body: Option<Json<DnssecEnable>>,
 ) -> ApiResult<Response> {
     let zone = state
         .db
         .run(move |c| Db::zone(c, id))
         .await?
         .ok_or_else(|| AppError::not_found("zone not found"))?;
+    if zone.is_secondary {
+        return Err(AppError::conflict("cannot sign a secondary zone"));
+    }
+    let nsec3 = body.map(|b| b.nsec3).unwrap_or(false);
     let secret = crate::dns::dnssec::generate_secret()
         .map_err(|e| AppError::internal(e.to_string()))?;
+    // Random 8-byte salt (hex); 0 iterations per RFC 9276.
+    let (salt_hex, iterations) = if nsec3 {
+        let mut salt = [0u8; 8];
+        rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut salt);
+        (Some(data_encoding::HEXLOWER.encode(&salt)), 0i64)
+    } else {
+        (None, 0i64)
+    };
     // Algorithm 13 = ECDSAP256SHA256.
+    let salt_clone = salt_hex.clone();
     state
         .db
-        .run(move |c| Db::create_dnssec_key(c, id, 13, &secret))
+        .run(move |c| Db::create_dnssec_key(c, id, 13, &secret, nsec3, salt_clone.as_deref(), iterations))
         .await?;
     state.reload_store()?;
     dnssec_status(&state, &zone.name).await

@@ -79,24 +79,36 @@ async fn main() -> anyhow::Result<()> {
         neg.response_code,
         neg.authorities.len()
     );
-    let nsec_records: Vec<Record> = neg
+    // The denial may be NSEC or NSEC3.
+    let denial_type = if neg.authorities.iter().any(|r| r.record_type() == RecordType::NSEC3) {
+        RecordType::NSEC3
+    } else {
+        RecordType::NSEC
+    };
+    let denial_records: Vec<Record> = neg
         .authorities
         .iter()
-        .filter(|r| r.record_type() == RecordType::NSEC)
+        .filter(|r| r.record_type() == denial_type)
         .cloned()
         .collect();
-    let nsec_sig = neg.authorities.iter().find_map(|r| match &r.data {
-        RData::DNSSEC(DNSSECRData::RRSIG(s)) if s.input().type_covered == RecordType::NSEC => {
+    // The NSEC/NSEC3 owner name (for NSEC3 it's the hashed name) is the RRSIG signer scope.
+    let denial_owner = denial_records.first().map(|r| r.name.clone());
+    let denial_sig = neg.authorities.iter().find_map(|r| match &r.data {
+        RData::DNSSEC(DNSSECRData::RRSIG(s)) if s.input().type_covered == denial_type => {
             Some(s.clone())
         }
         _ => None,
     });
-    match (nsec_sig, key) {
-        (Some(sig), Some(key)) => match key.verify_rrsig(&nx, DNSClass::IN, &sig, nsec_records.iter()) {
-            Ok(()) => println!("VALIDATED: NSEC denial RRSIG verifies (negative answer authenticated)"),
-            Err(e) => println!("INVALID negative: {e}"),
-        },
-        _ => println!("negative answer missing NSEC/RRSIG"),
+    match (denial_sig, denial_owner, key) {
+        (Some(sig), Some(owner), Some(key)) => {
+            match key.verify_rrsig(&owner, DNSClass::IN, &sig, denial_records.iter()) {
+                Ok(()) => println!(
+                    "VALIDATED: {denial_type} denial RRSIG verifies (negative answer authenticated)"
+                ),
+                Err(e) => println!("INVALID negative: {e}"),
+            }
+        }
+        _ => println!("negative answer missing denial record/RRSIG"),
     }
     Ok(())
 }
