@@ -23,10 +23,16 @@ Initial release. A single self-contained binary.
   formats), cached locally in SQLite; manual allow/deny rules; AdGuard-style
   rewrites (domain + subdomains to an IP or CNAME, effective even in
   authoritative-only mode). Block modes: NXDOMAIN / 0.0.0.0 / REFUSED.
-- Transports: plain UDP/TCP (53), DNS-over-TLS (853), and a self-contained
-  DNS-over-HTTPS endpoint supporting both GET and POST (RFC 8484).
+- Transports: plain UDP/TCP (53), DNS-over-TLS (853), a self-contained
+  DNS-over-HTTPS endpoint supporting both GET and POST (RFC 8484), and
+  DNS-over-QUIC (RFC 9250).
 - AXFR zone-transfer serving to IP-allow-listed secondaries (RFC 5936),
-  view-aware; disabled by default.
+  view-aware; disabled by default. Also acts as a secondary, replicating a zone
+  from a primary with SOA-driven refresh.
+- Opt-in per-zone DNSSEC online signing (ECDSA P-256): RRSIG over positive
+  answers, DNSKEY at the apex, authenticated denials via minimally-covering NSEC
+  (RFC 4470), and DS/DNSKEY export for the parent.
+- Prometheus `/metrics` endpoint (aggregate, non-identifying).
 
 ### Management
 - Embedded single-page web UI (no external assets) and a JSON API documented in

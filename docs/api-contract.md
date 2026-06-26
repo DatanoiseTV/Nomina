@@ -306,6 +306,50 @@ Precedence on a query: **local authoritative zones → rewrite → allow rule �
 unsupported types. `replace: true` clears the zone's existing records first.
 Pairs with `GET /api/zones/:id/export`.
 
+The `Zone` object additionally carries `is_secondary`, `primary_addr`,
+`last_check`, `last_error`, and `dnssec`. Records on a secondary zone are
+read-only (mutations return `409 conflict`).
+
+### Secondary (slave) zones
+
+A secondary zone replicates from a primary via AXFR and refreshes when the
+primary's SOA serial changes.
+`SecondaryZone`:
+```json
+{ "zone_id": 1, "name": "home.lan", "primary_addr": "10.0.0.1:53",
+  "refresh_secs": 3600, "serial": 12, "record_count": 8,
+  "last_check": "...", "last_error": null }
+```
+- `GET /api/secondary-zones` → `200 { "secondary_zones": [SecondaryZone] }`
+- `POST /api/secondary-zones` body `{ "name", "primary" }` (primary is `ip` or
+  `ip:port`) → `201 { "zone": Zone }` (creates the zone + performs the initial
+  transfer; the primary must allow AXFR from this server).
+- `POST /api/secondary-zones/:id/refresh` → `200 { "zone": Zone }` (force a
+  transfer; `502 transfer_failed` if the primary refuses).
+- Remove a secondary by deleting its zone (`DELETE /api/zones/:id`).
+
+### DNSSEC
+
+Per-zone opt-in online signing (single ECDSA P-256 key). When enabled, responses
+to DO-set clients are signed (RRSIG, DNSKEY at apex, signed NSEC denials).
+- `GET /api/zones/:id/dnssec` → `200 { "enabled": bool, "algorithm"?, "key_tag"?,
+  "dnskey"?, "ds"? }`. `ds`/`dnskey` are presentation strings to publish at the
+  parent.
+- `POST /api/zones/:id/dnssec` → `200` (generate key, enable) returning the same
+  status object.
+- `DELETE /api/zones/:id/dnssec` → `204` (disable, delete key).
+
+### Metrics
+
+`GET /metrics` (unauthenticated, like `/health`) returns Prometheus text-format
+aggregate counters (no client IPs or names). Protect via the bind address /
+`allow_networks`.
+
+### Transports
+
+`GET /api/status` `listeners[].kind` may be `udp | tcp | dot | doh | doq`.
+DNS-over-QUIC (RFC 9250) is configured via `dns.doq_listen` (startup config).
+
 `GET /api/status` additionally returns: `resolution_mode`, `blocked_domains`
 (count), `rewrite_count`, `active_zone_count`.
 
