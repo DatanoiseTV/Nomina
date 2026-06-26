@@ -22,12 +22,13 @@ ships with a web UI and JSON API.
 - **Rewrites (AdGuard style)** — point a domain and its subdomains at a fixed IP
   or CNAME (`ads.foobar.com → 1.2.3.4`), even with forwarding disabled.
 - **Modern transports** — plain UDP/TCP, DNS-over-TLS, DNS-over-HTTPS
-  (RFC 8484, GET **and** POST), and DNS-over-QUIC (RFC 9250).
+  (RFC 8484, GET **and** POST), DNS-over-QUIC (RFC 9250), and DNS-over-HTTP/3.
 - **DNSSEC** — opt-in per-zone online signing (ECDSA P-256) with signed negative
-  answers; exports DS/DNSKEY for the parent.
-- **Zone transfers, secondaries & import** — serve AXFR to IP-allow-listed
-  secondaries, act as a **secondary** (replicate a zone from a primary with
-  SOA-driven refresh), and import/export BIND zone files.
+  answers (**NSEC or NSEC3**); exports DS/DNSKEY for the parent.
+- **Zone transfers, secondaries & import** — serve AXFR (and IXFR) to
+  IP-allow-listed secondaries, act as a **secondary** (replicate a zone from a
+  primary with SOA-driven refresh), optional **TSIG** authentication, and
+  import/export BIND zone files.
 - **Metrics** — Prometheus `/metrics` endpoint.
 - **Privacy-first stats** — query logging is **off by default** (aggregate
   counters only); opt into anonymized (masked IPs) or full logging. The

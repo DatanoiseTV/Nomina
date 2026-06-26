@@ -224,10 +224,16 @@ Validation errors return `422 validation` with per-field detail.
   "cache_size": 1024,
   "cache_min_ttl": 0,
   "cache_max_ttl": 86400,
-  "dnssec_validate_upstream": false
+  "dnssec_validate_upstream": false,
+  "tsig_keys": [ { "name": "xfer.key", "algorithm": "hmac-sha256", "secret": "<base64>" } ],
+  "axfr_require_tsig": false
 }
 ```
 - `protocol` ∈ `udp | tcp | tls | https`. `tls`/`https` require `tls_name`.
+- `tsig_keys` are TSIG keys (RFC 8945) for zone-transfer auth; `algorithm` ∈
+  `hmac-sha1 | hmac-sha256 | hmac-sha512`. `axfr_require_tsig` requires a valid
+  TSIG on incoming AXFR. `POST /api/secondary-zones` accepts an optional
+  `tsig_key` (a key name) used to sign outgoing transfer requests.
 - `resolution_mode` ∈ `forward` (use the `forwarders`) | `recursive` (resolve from
   the root servers; no upstream needed) | `off` (authoritative-only: REFUSE names
   outside local zones — for a universal/internal-only nameserver).
@@ -338,8 +344,9 @@ to DO-set clients are signed (RRSIG, DNSKEY at apex, signed NSEC denials).
 - `GET /api/zones/:id/dnssec` → `200 { "enabled": bool, "algorithm"?, "key_tag"?,
   "dnskey"?, "ds"? }`. `ds`/`dnskey` are presentation strings to publish at the
   parent.
-- `POST /api/zones/:id/dnssec` → `200` (generate key, enable) returning the same
-  status object.
+- `POST /api/zones/:id/dnssec` body `{ "nsec3"?: bool }` → `200` (generate key,
+  enable; NSEC3 denials when `nsec3:true`, else NSEC) returning the status object
+  (which also reports `"nsec3"`).
 - `DELETE /api/zones/:id/dnssec` → `204` (disable, delete key).
 
 ### Metrics
@@ -350,8 +357,9 @@ aggregate counters (no client IPs or names). Protect via the bind address /
 
 ### Transports
 
-`GET /api/status` `listeners[].kind` may be `udp | tcp | dot | doh | doq`.
-DNS-over-QUIC (RFC 9250) is configured via `dns.doq_listen` (startup config).
+`GET /api/status` `listeners[].kind` may be `udp | tcp | dot | doh | doq | doh3`.
+DNS-over-QUIC (`dns.doq_listen`) and DNS-over-HTTP/3 (`dns.doh3_listen`) are
+startup config.
 
 `GET /api/status` additionally returns: `resolution_mode`, `blocked_domains`
 (count), `rewrite_count`, `active_zone_count`.

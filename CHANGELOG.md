@@ -24,15 +24,19 @@ Initial release. A single self-contained binary.
   rewrites (domain + subdomains to an IP or CNAME, effective even in
   authoritative-only mode). Block modes: NXDOMAIN / 0.0.0.0 / REFUSED.
 - Transports: plain UDP/TCP (53), DNS-over-TLS (853), a self-contained
-  DNS-over-HTTPS endpoint supporting both GET and POST (RFC 8484), and
-  DNS-over-QUIC (RFC 9250).
-- AXFR zone-transfer serving to IP-allow-listed secondaries (RFC 5936),
-  view-aware; disabled by default. Also acts as a secondary, replicating a zone
-  from a primary with SOA-driven refresh.
+  DNS-over-HTTPS endpoint supporting both GET and POST (RFC 8484),
+  DNS-over-QUIC (RFC 9250), and DNS-over-HTTP/3.
+- Zone transfers: AXFR serving to IP-allow-listed secondaries (RFC 5936),
+  view-aware; IXFR requests answered with a full transfer (RFC 1995 fallback);
+  also acts as a secondary, replicating a zone from a primary with SOA-driven
+  refresh. Optional TSIG (RFC 8945) authentication of transfers (hmac-sha1/256/
+  512): secondaries sign their requests, and AXFR serving can require a valid
+  TSIG.
 - Opt-in per-zone DNSSEC online signing (ECDSA P-256): RRSIG over positive
   answers, DNSKEY at the apex, authenticated denials via minimally-covering NSEC
-  (RFC 4470), and DS/DNSKEY export for the parent.
+  (RFC 4470) or NSEC3 (RFC 5155/9276), and DS/DNSKEY export for the parent.
 - Prometheus `/metrics` endpoint (aggregate, non-identifying).
+- A curated catalog of well-known blocklists for one-click subscription.
 
 ### Management
 - Embedded single-page web UI (no external assets) and a JSON API documented in
