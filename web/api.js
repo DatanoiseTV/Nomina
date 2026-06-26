@@ -125,6 +125,18 @@ export const api = {
   updateRecord: (id, body) => request("PUT", `/api/records/${id}`, body),
   deleteRecord: (id) => request("DELETE", `/api/records/${id}`),
 
+  // ---- Secondary (slave) zones ----
+  // Deletion reuses deleteZone(zone_id); the secondary is the zone.
+  listSecondaries: () => request("GET", "/api/secondary-zones"),
+  createSecondary: (name, primary) =>
+    request("POST", "/api/secondary-zones", { name, primary }),
+  refreshSecondary: (id) => request("POST", `/api/secondary-zones/${id}/refresh`, {}),
+
+  // ---- DNSSEC (per-zone online signing) ----
+  getDnssec: (id) => request("GET", `/api/zones/${id}/dnssec`),
+  enableDnssec: (id) => request("POST", `/api/zones/${id}/dnssec`, {}),
+  disableDnssec: (id) => request("DELETE", `/api/zones/${id}/dnssec`),
+
   // ---- Settings ----
   getSettings: () => request("GET", "/api/settings"),
   updateSettings: (body) => request("PUT", "/api/settings", body),

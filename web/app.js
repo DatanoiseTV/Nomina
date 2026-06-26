@@ -7,6 +7,7 @@ import { renderLogin, renderSetup } from "./views/auth.js";
 import { renderDashboard } from "./views/dashboard.js";
 import { renderZones } from "./views/zones.js";
 import { renderZoneDetail } from "./views/zone-detail.js";
+import { renderSecondary } from "./views/secondary.js";
 import { renderViews } from "./views/views.js";
 import { renderSettings } from "./views/settings.js";
 import { renderAccount } from "./views/account.js";
@@ -57,6 +58,7 @@ const routes = [
   { re: /^\/dashboard$/, view: renderDashboard, nav: "dashboard", title: "Dashboard" },
   { re: /^\/zones$/, view: renderZones, nav: "zones", title: "Zones" },
   { re: /^\/zones\/(\d+)$/, view: renderZoneDetail, nav: "zones", title: "Zone" },
+  { re: /^\/secondary$/, view: renderSecondary, nav: "secondary", title: "Secondary zones" },
   { re: /^\/views$/, view: renderViews, nav: "views", title: "Views" },
   { re: /^\/blocklists$/, view: renderBlocklists, nav: "blocklists", title: "Blocklists" },
   { re: /^\/rules$/, view: renderRules, nav: "rules", title: "Rules" },
@@ -69,6 +71,7 @@ const routes = [
 const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", href: "#/dashboard", icon: "dashboard" },
   { id: "zones", label: "Zones", href: "#/zones", icon: "zones" },
+  { id: "secondary", label: "Secondary zones", href: "#/secondary", icon: "link" },
   { id: "views", label: "Views", href: "#/views", icon: "views" },
   { section: "Filtering" },
   { id: "blocklists", label: "Blocklists", href: "#/blocklists", icon: "shield" },

@@ -66,6 +66,9 @@ export async function renderZoneDetail(root, { params, navigate }) {
     // SOA / settings
     zoneSettingsCard(zone, reload),
 
+    // DNSSEC
+    dnssecCard(zone),
+
     // records
     h("div.card.section", [
       h("div.card-head", [
@@ -203,6 +206,109 @@ function zoneSettingsCard(zone, reload) {
   return h("div.card.section", [
     h("div.card-head", [h("h2", "Zone settings")]),
     h("div.card-pad", form),
+  ]);
+}
+
+// ---- DNSSEC ----------------------------------------------------------------
+function dnssecCard(zone) {
+  const body = h("div.card-pad", loadingBlock());
+  const card = h("div.card.section", [
+    h("div.card-head", [h("h2", "DNSSEC")]),
+    body,
+  ]);
+
+  if (zone.is_secondary) {
+    clear(body).appendChild(h("div.inline-note",
+      "This is a secondary zone. Its records are replicated from the primary and signed there; PicoNS does not sign replicated zones."));
+    return card;
+  }
+
+  (async () => {
+    try {
+      const status = await api.getDnssec(zone.id);
+      renderDnssecBody(body, zone, status);
+    } catch (err) {
+      clear(body).appendChild(
+        h("div.inline-note", err && err.message ? err.message : "Could not load DNSSEC status."));
+    }
+  })();
+
+  return card;
+}
+
+function renderDnssecBody(body, zone, status) {
+  clear(body);
+
+  if (!status.enabled) {
+    const enable = h("button.btn.btn-primary", [icon("lock", 16), "Enable DNSSEC"]);
+    enable.addEventListener("click", async () => {
+      enable.disabled = true;
+      try {
+        const res = await api.enableDnssec(zone.id);
+        toast("DNSSEC enabled. Publish the DS record at your parent zone to complete the chain of trust.", "success", 7000);
+        renderDnssecBody(body, zone, res);
+      } catch (err) {
+        toastError(err);
+        enable.disabled = false;
+      }
+    });
+    body.appendChild(h("div", [
+      h("p.inline-note", { style: "margin:0 0 12px" },
+        "Sign this zone online with a single ECDSA P-256 key. Clients that set the DO bit then receive RRSIG, a DNSKEY at the apex, and signed NSEC denials."),
+      enable,
+    ]));
+    return;
+  }
+
+  const disable = h("button.btn.btn-danger.btn-sm", [icon("trash", 16), "Disable DNSSEC"]);
+  disable.addEventListener("click", () => {
+    confirmDialog({
+      title: "Disable DNSSEC?",
+      message: "This deletes the signing key and stops serving signed responses. Remove the DS record from your parent zone first to avoid resolution failures.",
+      confirmLabel: "Disable DNSSEC",
+      danger: true,
+      onConfirm: async () => {
+        try {
+          await api.disableDnssec(zone.id);
+          toast("DNSSEC disabled.", "success");
+          renderDnssecBody(body, zone, { enabled: false });
+        } catch (err) { toastError(err); throw err; }
+      },
+    });
+  });
+
+  body.appendChild(h("div", [
+    h("dl.kv", { style: "margin-bottom:14px" }, [
+      h("dt", "Status"), h("dd", badge("Signed", "on")),
+      h("dt", "Algorithm"), h("dd", h("span.mono", status.algorithm || "-")),
+      h("dt", "Key tag"), h("dd", h("span.mono", status.key_tag != null ? String(status.key_tag) : "-")),
+    ]),
+    h("div.notice", [
+      icon("shield", 18),
+      h("div", "Publish the DS record at your parent zone / registrar to complete the chain of trust."),
+    ]),
+    keyField("DS record", status.ds),
+    keyField("DNSKEY record", status.dnskey),
+    h("div", { style: "display:flex;justify-content:flex-end;margin-top:8px" }, disable),
+  ]));
+}
+
+function keyField(label, value) {
+  if (!value) return null;
+  const copy = h("button.btn-icon", { type: "button", title: `Copy ${label}`, "aria-label": `Copy ${label}` }, icon("copy", 16));
+  copy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast(`${label} copied to clipboard.`, "success");
+    } catch (_) {
+      toast("Could not copy to clipboard.", "error");
+    }
+  });
+  return h("div.field", [
+    h("label", { style: "display:flex;align-items:center;gap:8px" }, [label, copy]),
+    h("code.mono", {
+      style: "display:block;white-space:pre-wrap;word-break:break-all;background:var(--bg-sunken);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;font-size:0.82rem",
+    }, value),
   ]);
 }
 

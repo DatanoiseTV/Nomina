@@ -2,7 +2,7 @@
 
 import { api } from "../api.js";
 import {
-  h, clear, icon, onOffBadge, fmtInt, fmtTime,
+  h, clear, icon, badge, onOffBadge, fmtInt, fmtTime,
   loadingBlock, emptyState, openDialog, confirmDialog,
   applyFieldErrors, toast, toastError,
 } from "../ui.js";
@@ -50,7 +50,11 @@ export async function renderZones(root, { navigate }) {
     });
 
     const tr = h("tr.row-link", [
-      h("td.mono", h("strong", z.name)),
+      h("td", h("div", { style: "display:flex;align-items:center;gap:8px;flex-wrap:wrap" }, [
+        h("strong.mono", z.name),
+        z.is_secondary ? badge("secondary", "muted") : null,
+        z.dnssec ? badge("signed", "accent") : null,
+      ])),
       h("td", onOffBadge(z.enabled)),
       h("td", fmtInt(z.record_count)),
       h("td.mono", String(z.default_ttl)),

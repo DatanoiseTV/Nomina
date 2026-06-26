@@ -25,6 +25,16 @@ const RESOLUTION_LABEL = {
   off: "Authoritative-only",
 };
 
+// Full names for listener kinds; the row shows the short uppercase code with
+// this as a tooltip. Unknown kinds fall back to the raw code.
+const LISTENER_LABEL = {
+  udp: "DNS over UDP",
+  tcp: "DNS over TCP",
+  dot: "DNS-over-TLS",
+  doh: "DNS-over-HTTPS",
+  doq: "DNS-over-QUIC",
+};
+
 const RCODE_KIND = {
   NOERROR: "on",
   NXDOMAIN: "warn",
@@ -139,7 +149,7 @@ function listenersView(listeners) {
     listeners.map((l) =>
       h("div.card.card-pad", { style: "box-shadow:none" }, [
         h("div", { style: "display:flex;align-items:center;gap:8px;justify-content:space-between" }, [
-          h("strong", { style: "text-transform:uppercase;letter-spacing:0.03em" }, l.kind),
+          h("strong", { style: "text-transform:uppercase;letter-spacing:0.03em", title: LISTENER_LABEL[l.kind] || l.kind }, l.kind),
           l.enabled
             ? badge("on", "on")
             : badge("off", "off"),
