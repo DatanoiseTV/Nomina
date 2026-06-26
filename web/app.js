@@ -69,10 +69,12 @@ const routes = [
 ];
 
 const NAV_ITEMS = [
+  { section: "Overview" },
   { id: "dashboard", label: "Dashboard", href: "#/dashboard", icon: "dashboard" },
+  { section: "DNS" },
   { id: "zones", label: "Zones", href: "#/zones", icon: "zones" },
-  { id: "secondary", label: "Secondary zones", href: "#/secondary", icon: "link" },
   { id: "views", label: "Views", href: "#/views", icon: "views" },
+  { id: "secondary", label: "Secondary zones", href: "#/secondary", icon: "link" },
   { section: "Filtering" },
   { id: "blocklists", label: "Blocklists", href: "#/blocklists", icon: "shield" },
   { id: "rules", label: "Rules", href: "#/rules", icon: "filter" },
