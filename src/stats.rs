@@ -33,6 +33,8 @@ pub enum QueryOutcome {
     ServFail,
     Blocked,
     Rewritten,
+    /// Blocked as a dangerous lookalike / homograph (phishing protection).
+    Dangerous,
 }
 
 impl QueryOutcome {
@@ -45,6 +47,7 @@ impl QueryOutcome {
             QueryOutcome::ServFail => "servfail",
             QueryOutcome::Blocked => "blocked",
             QueryOutcome::Rewritten => "rewritten",
+            QueryOutcome::Dangerous => "dangerous",
         }
     }
 }
@@ -69,6 +72,7 @@ struct Counters {
     refused: AtomicU64,
     servfail: AtomicU64,
     blocked: AtomicU64,
+    dangerous: AtomicU64,
 }
 
 /// Per-second ring of query counts for the rate chart.
@@ -207,6 +211,9 @@ impl Stats {
             QueryOutcome::Blocked => {
                 self.counters.blocked.fetch_add(1, Ordering::Relaxed);
             }
+            QueryOutcome::Dangerous => {
+                self.counters.dangerous.fetch_add(1, Ordering::Relaxed);
+            }
         }
         {
             let mut q = self.by_qtype.lock();
@@ -279,6 +286,7 @@ impl Stats {
             "refused": self.counters.refused.load(Ordering::Relaxed),
             "servfail": self.counters.servfail.load(Ordering::Relaxed),
             "blocked": self.counters.blocked.load(Ordering::Relaxed),
+            "dangerous": self.counters.dangerous.load(Ordering::Relaxed),
             "by_qtype": by_qtype,
             "qps_10s": (qps_10s * 100.0).round() / 100.0,
             "qps_1m": (qps_1m * 100.0).round() / 100.0,

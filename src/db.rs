@@ -117,6 +117,21 @@ CREATE TABLE IF NOT EXISTS conditional_forwards (
     created_at TEXT NOT NULL
 );
 
+-- Persistent query log (written only when query logging is enabled).
+CREATE TABLE IF NOT EXISTS query_log (
+    id      INTEGER PRIMARY KEY,
+    at      TEXT NOT NULL,
+    client  TEXT NOT NULL,
+    view    TEXT,
+    name    TEXT NOT NULL,
+    qtype   TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    rcode   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_qlog_id ON query_log(id);
+CREATE INDEX IF NOT EXISTS idx_qlog_name ON query_log(name);
+CREATE INDEX IF NOT EXISTS idx_qlog_outcome ON query_log(outcome);
+
 -- Per-zone DNSSEC signing key (base64 PKCS#8 DER). Presence = signed zone.
 CREATE TABLE IF NOT EXISTS dnssec_keys (
     zone_id    INTEGER PRIMARY KEY REFERENCES zones(id) ON DELETE CASCADE,

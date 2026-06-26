@@ -90,6 +90,12 @@ pub async fn status(State(state): State<SharedState>, _auth: Authed) -> ApiResul
         "uptime_seconds": state.stats.uptime_seconds(),
         "started_at": state.stats.started_at(),
         "listeners": listener_infos(&state.config),
+        "management": {
+            "addr": state.config.web.listen.to_string(),
+            "scheme": if state.config.web.tls { "https" } else { "http" },
+            "disabled": state.config.web.disabled,
+            "allow_networks": state.config.web.allow_networks,
+        },
         "zone_count": zones.len(),
         "active_zone_count": store.zone_count(),
         "record_count": record_count,

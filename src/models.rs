@@ -474,10 +474,17 @@ fn prequalify_data(rtype: RecordType, data: &str, zone: &str) -> String {
     let qualify = |tok: &str| -> String {
         let t = tok.trim();
         if t.is_empty() || t == "@" {
+            // The zone apex.
             format!("{zone}.")
         } else if t.ends_with('.') {
+            // Already fully qualified.
             t.to_string()
+        } else if t.contains('.') {
+            // Multi-label without a trailing dot: treat as a FQDN (e.g. a user
+            // typing `mail.google.com` for a CNAME target), not relative.
+            format!("{t}.")
         } else {
+            // Single label: relative to the zone (e.g. `nas` -> `nas.<zone>.`).
             format!("{t}.{zone}.")
         }
     };

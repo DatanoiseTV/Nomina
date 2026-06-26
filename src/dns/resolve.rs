@@ -207,7 +207,7 @@ async fn resolve_external(
             if crate::dns::homograph::is_suspicious(&key, state.homograph_mode()) {
                 return (
                     block_answer(state.block_mode(), qname, qtype, recursion_available),
-                    QueryOutcome::Blocked,
+                    QueryOutcome::Dangerous,
                 );
             }
         }
