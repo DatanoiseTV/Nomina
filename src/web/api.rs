@@ -1480,6 +1480,123 @@ pub async fn delete_conditional(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
+// ---------------------------------------------------------------------------
+// DynDNS tokens
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct DynDnsTokenCreate {
+    label: String,
+    username: String,
+    /// Optional client password; a strong one is generated when omitted.
+    secret: Option<String>,
+    hostnames: Vec<String>,
+    view_id: Option<i64>,
+    ttl: Option<u32>,
+}
+
+pub async fn list_dyndns_tokens(
+    State(state): State<SharedState>,
+    _auth: Authed,
+) -> ApiResult<Response> {
+    let tokens = state.db.run(Db::list_dyndns_tokens).await?;
+    Ok(ok_json(json!({ "tokens": tokens })))
+}
+
+pub async fn create_dyndns_token(
+    State(state): State<SharedState>,
+    _auth: Authed,
+    Json(req): Json<DynDnsTokenCreate>,
+) -> ApiResult<Response> {
+    let label = req.label.trim().to_string();
+    if label.is_empty() {
+        return Err(validation_field("label", "must not be empty"));
+    }
+    let username = req.username.trim().to_string();
+    if username.is_empty() || username.len() > 64 || username.contains(':') {
+        return Err(validation_field("username", "must be 1-64 chars and contain no colon"));
+    }
+    if req.hostnames.is_empty() {
+        return Err(validation_field("hostnames", "at least one hostname is required"));
+    }
+
+    // Each hostname must be a valid FQDN covered by a local zone.
+    let zones = state.db.run(Db::list_zones).await?;
+    let mut hostnames = Vec::new();
+    for h in &req.hostnames {
+        let host = h.trim().trim_end_matches('.').to_ascii_lowercase();
+        if host.is_empty() {
+            continue;
+        }
+        if hickory_proto::rr::Name::from_utf8(format!("{host}.")).is_err() {
+            return Err(validation_field("hostnames", &format!("invalid hostname: {host}")));
+        }
+        let covered = zones.iter().any(|z| {
+            let zn = z.name.trim_end_matches('.').to_ascii_lowercase();
+            host == zn || host.ends_with(&format!(".{zn}"))
+        });
+        if !covered {
+            return Err(validation_field(
+                "hostnames",
+                &format!("no local zone covers {host}"),
+            ));
+        }
+        hostnames.push(host);
+    }
+    if hostnames.is_empty() {
+        return Err(validation_field("hostnames", "at least one hostname is required"));
+    }
+
+    if let Some(vid) = req.view_id {
+        if state.db.run(move |c| Db::view(c, vid)).await?.is_none() {
+            return Err(validation_field("view_id", "view not found"));
+        }
+    }
+
+    // Usernames must be unique (also enforced by a DB constraint).
+    let exists_user = username.clone();
+    if state
+        .db
+        .run(move |c| Db::dyndns_auth(c, &exists_user))
+        .await?
+        .is_some()
+    {
+        return Err(AppError::conflict("a token with this username already exists"));
+    }
+
+    let secret = req.secret.filter(|s| !s.trim().is_empty()).unwrap_or_else(random_token);
+    let secret_hash = hash_password(&secret)?;
+    let ttl = req.ttl.unwrap_or(60).max(1);
+    let view_id = req.view_id;
+
+    let label_db = label.clone();
+    let username_db = username.clone();
+    let id = state
+        .db
+        .run(move |c| {
+            Db::create_dyndns_token(c, &label_db, &username_db, &secret_hash, &hostnames, view_id, ttl)
+        })
+        .await?;
+
+    // The plaintext secret is returned only once, at creation.
+    Ok(created_json(json!({
+        "id": id,
+        "label": label,
+        "username": username,
+        "secret": secret,
+        "update_url": format!("/nic/update?hostname=<host>&myip=<ip>"),
+    })))
+}
+
+pub async fn delete_dyndns_token(
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+    _auth: Authed,
+) -> ApiResult<Response> {
+    state.db.run(move |c| Db::delete_dyndns_token(c, id)).await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
 fn normalize_domain(domain: &str) -> Result<String, AppError> {
     let d = domain.trim().trim_end_matches('.').to_ascii_lowercase();
     if d.is_empty() {

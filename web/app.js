@@ -15,6 +15,7 @@ import { renderBlocklists } from "./views/blocklists.js";
 import { renderRules } from "./views/rules.js";
 import { renderRewrites } from "./views/rewrites.js";
 import { renderConditional } from "./views/conditional.js";
+import { renderDyndns } from "./views/dyndns.js";
 
 // ---- Theme -----------------------------------------------------------------
 const THEME_KEY = "picons-theme";
@@ -64,6 +65,7 @@ const routes = [
   { re: /^\/rules$/, view: renderRules, nav: "rules", title: "Rules" },
   { re: /^\/rewrites$/, view: renderRewrites, nav: "rewrites", title: "Rewrites" },
   { re: /^\/conditional$/, view: renderConditional, nav: "conditional", title: "Conditional forwarding" },
+  { re: /^\/dyndns$/, view: renderDyndns, nav: "dyndns", title: "DynDNS" },
   { re: /^\/settings$/, view: renderSettings, nav: "settings", title: "Settings" },
   { re: /^\/account$/, view: renderAccount, nav: "account", title: "Account" },
 ];
@@ -81,6 +83,8 @@ const NAV_ITEMS = [
   { id: "rewrites", label: "Rewrites", href: "#/rewrites", icon: "shuffle" },
   { section: "Forwarding" },
   { id: "conditional", label: "Conditional", href: "#/conditional", icon: "shuffle" },
+  { section: "Dynamic DNS" },
+  { id: "dyndns", label: "DynDNS", href: "#/dyndns", icon: "link" },
   { section: "System" },
   { id: "settings", label: "Settings", href: "#/settings", icon: "settings" },
   { id: "account", label: "Account", href: "#/account", icon: "account" },

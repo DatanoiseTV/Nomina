@@ -21,6 +21,9 @@ ships with a web UI and JSON API.
   NXDOMAIN, `0.0.0.0`, or REFUSED.
 - **Rewrites (AdGuard style)** — point a domain and its subdomains at a fixed IP
   or CNAME (`ads.foobar.com → 1.2.3.4`), even with forwarding disabled.
+- **DynDNS** — let routers and dynamic-IP clients update A/AAAA records over HTTP
+  via a DynDNS2-compatible `/nic/update` endpoint (ddclient, FRITZ!Box, UniFi,
+  OpenWrt, No-IP). Per-client tokens are scoped to specific hostnames.
 - **Modern transports** — plain UDP/TCP, DNS-over-TLS, DNS-over-HTTPS
   (RFC 8484, GET **and** POST), DNS-over-QUIC (RFC 9250), and DNS-over-HTTP/3.
 - **DNSSEC** — opt-in per-zone online signing (ECDSA P-256) with signed negative
@@ -32,7 +35,8 @@ ships with a web UI and JSON API.
 - **Metrics** — Prometheus `/metrics` endpoint.
 - **Privacy-first stats** — query logging is **off by default** (aggregate
   counters only); opt into anonymized (masked IPs) or full logging. The
-  dashboard shows req/s, a rate sparkline, top domains, and blocked counts.
+  dashboard shows req/s, a rate sparkline, top domains, blocked/dangerous
+  counts, query-latency (min/avg/median/max), and cache hit-rate.
 - **Secure by default** — argon2 logins, server-side sessions, CSRF protection,
   login throttling, strict security headers, a strict CSP, selectable bind
   addresses, an optional management allow-list, and privilege dropping.

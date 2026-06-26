@@ -166,4 +166,9 @@ export const api = {
   createConditionalForward: (body) => request("POST", "/api/conditional-forwards", body),
   updateConditionalForward: (id, body) => request("PUT", `/api/conditional-forwards/${id}`, body),
   deleteConditionalForward: (id) => request("DELETE", `/api/conditional-forwards/${id}`),
+
+  // ---- DynDNS tokens ----
+  listDyndnsTokens: () => request("GET", "/api/dyndns/tokens"),
+  createDyndnsToken: (body) => request("POST", "/api/dyndns/tokens", body),
+  deleteDyndnsToken: (id) => request("DELETE", `/api/dyndns/tokens/${id}`),
 };

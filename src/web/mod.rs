@@ -3,6 +3,7 @@
 
 pub mod api;
 pub mod auth;
+pub mod dyndns;
 pub mod fetch;
 
 use std::convert::Infallible;
@@ -104,7 +105,19 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/api/conditional-forwards/{id}",
             put(api::update_conditional).delete(api::delete_conditional),
-        );
+        )
+        .route(
+            "/api/dyndns/tokens",
+            get(api::list_dyndns_tokens).post(api::create_dyndns_token),
+        )
+        .route(
+            "/api/dyndns/tokens/{id}",
+            axum::routing::delete(api::delete_dyndns_token),
+        )
+        // DynDNS2 update endpoint. Authenticated by per-token HTTP Basic auth;
+        // intentionally outside the session/CSRF gate above.
+        .route("/nic/update", get(dyndns::nic_update))
+        .route("/v3/update", get(dyndns::nic_update));
 
     // Optional CIDR allow-list for the whole management server.
     let allow: Arc<Vec<IpNet>> = Arc::new(
@@ -148,7 +161,12 @@ async fn ip_guard(
     req: ExtractRequest,
     next: Next,
 ) -> Response {
-    if allow.iter().any(|n| n.contains(&peer.ip())) {
+    // DynDNS clients live on dynamic, remote IPs by nature, so the update
+    // endpoint is exempt from the management allow-list — its per-token Basic
+    // auth is the security boundary.
+    let path = req.uri().path();
+    let dyndns = path == "/nic/update" || path == "/v3/update";
+    if dyndns || allow.iter().any(|n| n.contains(&peer.ip())) {
         next.run(req).await
     } else {
         tracing::warn!(client = %peer.ip(), "rejected management request (not in allow-list)");

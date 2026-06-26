@@ -4,6 +4,24 @@ All notable changes to PicoNS are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **DynDNS** — DynDNS2-compatible `GET /nic/update` endpoint (also `/v3/update`)
+  for routers and dynamic-IP clients (ddclient, FRITZ!Box, UniFi, OpenWrt,
+  No-IP). Updates are authenticated by dedicated scoped tokens (HTTP Basic auth,
+  argon2-hashed secrets) that may only repoint the hostnames assigned to them.
+  Upserts A/AAAA records in the matching local zone and bumps the zone serial so
+  secondaries/AXFR/DNSSEC follow. Exempt from the management allow-list since
+  clients live on dynamic remote IPs. Token management in the web UI and API
+  (`/api/dyndns/tokens`).
+- **Edge answer cache** in front of the upstream resolver, with hit/miss/size and
+  hit-rate surfaced on the dashboard and in `/api/stats` (`cache` object). New
+  `cached` query outcome.
+- **Query-latency stats** (min/avg/median/max, milliseconds) on the dashboard and
+  in `/api/stats` (`latency` object).
+- **Dangerous-request counter** (homograph/lookalike blocks) in `/api/stats`.
+
 ## [0.1.0] - 2026-06-26
 
 Initial release. A single self-contained binary.

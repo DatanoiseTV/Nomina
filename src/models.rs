@@ -223,6 +223,22 @@ pub struct TsigKey {
     pub secret: String,
 }
 
+/// A DynDNS update credential (public view — never carries the secret hash).
+/// `hostnames` is the set of FQDNs this token is permitted to repoint.
+#[derive(Debug, Clone, Serialize)]
+pub struct DynDnsToken {
+    pub id: i64,
+    pub label: String,
+    pub username: String,
+    pub hostnames: Vec<String>,
+    pub view_id: Option<i64>,
+    pub ttl: u32,
+    pub enabled: bool,
+    pub last_update_at: Option<String>,
+    pub last_ip: Option<String>,
+    pub created_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     /// Upstream resolvers used when `resolution_mode` is `forward`.

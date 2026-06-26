@@ -154,6 +154,23 @@ CREATE TABLE IF NOT EXISTS secondary_zones (
     tsig_key     TEXT,
     created_at   TEXT NOT NULL
 );
+
+-- DynDNS update credentials. Each token authenticates a DynDNS2 client and is
+-- scoped to an explicit list of hostnames it may repoint (defence in depth: a
+-- leaked token cannot touch records outside its scope).
+CREATE TABLE IF NOT EXISTS dyndns_tokens (
+    id             INTEGER PRIMARY KEY,
+    label          TEXT NOT NULL,
+    username       TEXT NOT NULL UNIQUE,
+    secret_hash    TEXT NOT NULL,
+    hostnames      TEXT NOT NULL,
+    view_id        INTEGER REFERENCES views(id) ON DELETE SET NULL,
+    ttl            INTEGER NOT NULL DEFAULT 60,
+    enabled        INTEGER NOT NULL DEFAULT 1,
+    last_update_at TEXT,
+    last_ip        TEXT,
+    created_at     TEXT NOT NULL
+);
 "#;
 
 /// Idempotent column additions for databases created by older versions.
@@ -167,6 +184,29 @@ const MIGRATIONS: &[&str] = &[
 #[derive(Clone)]
 pub struct Db {
     conn: Arc<Mutex<Connection>>,
+}
+
+/// A DynDNS token row including the secret hash (never serialized to the API).
+pub struct DynDnsAuthRow {
+    pub id: i64,
+    pub secret_hash: String,
+    pub hostnames: Vec<String>,
+    pub view_id: Option<i64>,
+    pub ttl: u32,
+    pub enabled: bool,
+}
+
+/// Outcome of applying one DynDNS address update.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DynUpdate {
+    /// A new record was created for the host.
+    Created,
+    /// An existing record's address changed.
+    Updated,
+    /// The host already pointed at this address.
+    Unchanged,
+    /// No local zone covers the hostname.
+    NoZone,
 }
 
 /// A stored session row (server-side).
@@ -205,6 +245,24 @@ fn now() -> String {
 /// Map a serde error encountered while (de)serializing a JSON column.
 fn json_err(e: serde_json::Error) -> rusqlite::Error {
     rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+}
+
+/// Parse a stored comma-separated hostname list into normalized FQDNs.
+fn split_hostnames(csv: &str) -> Vec<String> {
+    csv.split(',')
+        .map(|h| h.trim().trim_end_matches('.').to_ascii_lowercase())
+        .filter(|h| !h.is_empty())
+        .collect()
+}
+
+/// Serialize a hostname list for storage (normalized, comma-separated).
+fn join_hostnames(hostnames: &[String]) -> String {
+    hostnames
+        .iter()
+        .map(|h| h.trim().trim_end_matches('.').to_ascii_lowercase())
+        .filter(|h| !h.is_empty())
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 impl Db {
@@ -671,6 +729,146 @@ impl Db {
             Self::bump_serial(conn, zid)?;
         }
         Ok(zone_id)
+    }
+
+    // ----- DynDNS tokens ---------------------------------------------------
+
+    pub fn list_dyndns_tokens(conn: &Connection) -> rusqlite::Result<Vec<DynDnsToken>> {
+        let mut stmt = conn.prepare(
+            "SELECT id, label, username, hostnames, view_id, ttl, enabled,
+                    last_update_at, last_ip, created_at
+             FROM dyndns_tokens ORDER BY label ASC",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                let hostnames: String = r.get(3)?;
+                Ok(DynDnsToken {
+                    id: r.get(0)?,
+                    label: r.get(1)?,
+                    username: r.get(2)?,
+                    hostnames: split_hostnames(&hostnames),
+                    view_id: r.get(4)?,
+                    ttl: r.get(5)?,
+                    enabled: r.get::<_, i64>(6)? != 0,
+                    last_update_at: r.get(7)?,
+                    last_ip: r.get(8)?,
+                    created_at: r.get(9)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn create_dyndns_token(
+        conn: &Connection,
+        label: &str,
+        username: &str,
+        secret_hash: &str,
+        hostnames: &[String],
+        view_id: Option<i64>,
+        ttl: u32,
+    ) -> rusqlite::Result<i64> {
+        let hostnames = join_hostnames(hostnames);
+        conn.execute(
+            "INSERT INTO dyndns_tokens
+                (label, username, secret_hash, hostnames, view_id, ttl, enabled, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7)",
+            params![label, username, secret_hash, hostnames, view_id, ttl, now()],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn delete_dyndns_token(conn: &Connection, id: i64) -> rusqlite::Result<()> {
+        conn.execute("DELETE FROM dyndns_tokens WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    /// Look up a DynDNS token by its login username (the Basic-auth user).
+    pub fn dyndns_auth(conn: &Connection, username: &str) -> rusqlite::Result<Option<DynDnsAuthRow>> {
+        conn.query_row(
+            "SELECT id, secret_hash, hostnames, view_id, ttl, enabled
+             FROM dyndns_tokens WHERE username = ?1",
+            params![username],
+            |r| {
+                let hostnames: String = r.get(2)?;
+                Ok(DynDnsAuthRow {
+                    id: r.get(0)?,
+                    secret_hash: r.get(1)?,
+                    hostnames: split_hostnames(&hostnames),
+                    view_id: r.get(3)?,
+                    ttl: r.get(4)?,
+                    enabled: r.get::<_, i64>(5)? != 0,
+                })
+            },
+        )
+        .optional()
+    }
+
+    /// Record a successful update against a token (audit / UI display).
+    pub fn touch_dyndns_token(conn: &Connection, id: i64, ip: &str) -> rusqlite::Result<()> {
+        conn.execute(
+            "UPDATE dyndns_tokens SET last_update_at = ?1, last_ip = ?2 WHERE id = ?3",
+            params![now(), ip, id],
+        )?;
+        Ok(())
+    }
+
+    /// Upsert the A/AAAA record for `host_fqdn` to `ip` in the given view. Routes
+    /// through `create_record`/`update_record`, so the zone serial is bumped on
+    /// any change (secondaries/AXFR/DNSSEC see it); `Unchanged` bumps nothing.
+    pub fn dyndns_set_address(
+        conn: &Connection,
+        host_fqdn: &str,
+        ip: std::net::IpAddr,
+        view_id: Option<i64>,
+        ttl: u32,
+    ) -> rusqlite::Result<DynUpdate> {
+        let host = host_fqdn.trim().trim_end_matches('.').to_ascii_lowercase();
+        // Longest-suffix match against configured zones.
+        let zones = Self::list_zones(conn)?;
+        let mut best: Option<(i64, String)> = None;
+        for z in &zones {
+            let zn = z.name.trim_end_matches('.').to_ascii_lowercase();
+            let matches = host == zn || host.ends_with(&format!(".{zn}"));
+            if matches && best.as_ref().map(|(_, n)| zn.len() > n.len()).unwrap_or(true) {
+                best = Some((z.id, zn));
+            }
+        }
+        let Some((zone_id, zone_name)) = best else {
+            return Ok(DynUpdate::NoZone);
+        };
+        let rel = if host == zone_name {
+            "@".to_string()
+        } else {
+            host[..host.len() - zone_name.len() - 1].to_string()
+        };
+        let rtype = if ip.is_ipv4() { "A" } else { "AAAA" };
+        let data = ip.to_string();
+
+        // Find an existing record at this owner/type in the same view.
+        let mut stmt = conn.prepare(
+            "SELECT id, view_id, data FROM records
+             WHERE zone_id = ?1 AND name = ?2 COLLATE NOCASE AND rtype = ?3",
+        )?;
+        let existing = stmt
+            .query_map(params![zone_id, rel, rtype], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, Option<i64>>(1)?, r.get::<_, String>(2)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .find(|(_, v, _)| *v == view_id);
+
+        match existing {
+            Some((_, _, cur)) if cur == data => Ok(DynUpdate::Unchanged),
+            Some((id, _, _)) => {
+                Self::update_record(conn, id, None, None, None, Some(&data), None)?;
+                Ok(DynUpdate::Updated)
+            }
+            None => {
+                Self::create_record(conn, zone_id, view_id, &rel, rtype, Some(ttl), &data)?;
+                Ok(DynUpdate::Created)
+            }
+        }
     }
 
     /// Bulk-insert imported records into a zone within one transaction.
