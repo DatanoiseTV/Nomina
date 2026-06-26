@@ -257,6 +257,9 @@ survive restarts and aren't re-fetched on boot.
 - `DELETE /api/blocklists/:id` → `204`
 - `POST /api/blocklists/:id/refresh` → `200 { "blocklist": Blocklist }` (re-fetch one)
 - `POST /api/blocklists/refresh_all` → `200 { "blocklists": [Blocklist] }`
+- `GET /api/blocklists/catalog` → `200 { "catalog": [ { "name","url","format","category","description" } ] }`
+  — a curated list of well-known blocklists the UI offers one-click; "add" a
+  catalog entry by POSTing it as a normal blocklist.
 
 `BlockRule` (manual allow/deny; matches the domain and its subdomains):
 ```json

@@ -427,7 +427,8 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 .form-row { display: flex; gap: 12px; flex-wrap: wrap; }
 .form-row > .field { flex: 1; min-width: 140px; }
 
-.switch {
+/* `label.switch` (not `.switch`) so it wins over `.field > label { display: block }`. */
+label.switch {
   display: inline-flex;
   align-items: center;
   gap: 10px;

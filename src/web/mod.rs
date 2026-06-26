@@ -82,6 +82,7 @@ pub fn router(state: SharedState) -> Router {
             "/api/blocklists",
             get(api::list_blocklists).post(api::create_blocklist),
         )
+        .route("/api/blocklists/catalog", get(api::blocklist_catalog))
         .route("/api/blocklists/refresh_all", post(api::refresh_all_blocklists))
         .route(
             "/api/blocklists/{id}",

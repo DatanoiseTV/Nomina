@@ -1027,6 +1027,28 @@ pub async fn list_blocklists(State(state): State<SharedState>, _auth: Authed) ->
     Ok(ok_json(json!({ "blocklists": lists })))
 }
 
+/// A curated catalog of well-known blocklists the UI can offer one-click.
+pub async fn blocklist_catalog(_auth: Authed) -> Response {
+    // (name, url, format, category, description)
+    let catalog = [
+        ("StevenBlack (unified)", "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts", "hosts", "ads + malware", "Popular unified hosts: ads, malware, fakenews-free base list."),
+        ("Hagezi Multi PRO", "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/hosts/pro.txt", "hosts", "ads + tracking", "Balanced, well-maintained ad/tracker/affiliate blocklist."),
+        ("1Hosts (Lite)", "https://raw.githubusercontent.com/badmojr/1Hosts/master/Lite/hosts.txt", "hosts", "ads + tracking", "Lightweight, low-false-positive ad/tracker list."),
+        ("OISD (small)", "https://small.oisd.nl/domains", "domains", "ads + tracking", "Curated meta-list focused on low breakage."),
+        ("Peter Lowe's list", "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&showintro=0&mimetype=plaintext", "hosts", "ads + tracking", "Long-running ad/tracking server list."),
+        ("Dan Pollock (someonewhocares)", "https://someonewhocares.org/hosts/zero/hosts", "hosts", "ads + tracking", "Classic curated hosts file."),
+        ("URLhaus malware", "https://urlhaus.abuse.ch/downloads/hostfile/", "hosts", "malware", "abuse.ch malware/payload distribution hosts."),
+    ];
+    let items: Vec<_> = catalog
+        .iter()
+        .map(|(name, url, format, category, description)| {
+            json!({ "name": name, "url": url, "format": format,
+                    "category": category, "description": description })
+        })
+        .collect();
+    ok_json(json!({ "catalog": items }))
+}
+
 pub async fn create_blocklist(
     State(state): State<SharedState>,
     _auth: Authed,

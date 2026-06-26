@@ -151,15 +151,17 @@ impl Default for ResolutionMode {
     }
 }
 
-/// What to return for a blocked name.
+/// What to return for a blocked name. Serialized values match the API contract.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
 pub enum BlockMode {
     /// Answer NXDOMAIN.
+    #[serde(rename = "nxdomain")]
     NxDomain,
     /// Answer 0.0.0.0 / :: (a sinkhole address).
+    #[serde(rename = "zero_ip")]
     ZeroIp,
     /// Answer REFUSED.
+    #[serde(rename = "refused")]
     Refused,
 }
 
