@@ -68,8 +68,25 @@ pub struct Zone {
     pub default_ttl: u32,
     pub serial: u32,
     pub record_count: i64,
+    /// Set when this zone is a secondary replicated from a primary.
+    pub is_secondary: bool,
+    pub primary_addr: Option<String>,
+    pub last_check: Option<String>,
+    pub last_error: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SecondaryZone {
+    pub zone_id: i64,
+    pub name: String,
+    pub primary_addr: String,
+    pub refresh_secs: i64,
+    pub serial: u32,
+    pub record_count: i64,
+    pub last_check: Option<String>,
+    pub last_error: Option<String>,
 }
 
 // ---------------------------------------------------------------------------

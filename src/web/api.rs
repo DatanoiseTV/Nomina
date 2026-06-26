@@ -559,6 +559,85 @@ pub async fn export_zone(
         .into_response())
 }
 
+// ---------------------------------------------------------------------------
+// Secondary zones
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct SecondaryCreate {
+    name: String,
+    primary: String,
+}
+
+pub async fn list_secondaries(State(state): State<SharedState>, _auth: Authed) -> ApiResult<Response> {
+    let items = state.db.run(Db::list_secondaries).await?;
+    Ok(ok_json(json!({ "secondary_zones": items })))
+}
+
+pub async fn create_secondary(
+    State(state): State<SharedState>,
+    _auth: Authed,
+    Json(req): Json<SecondaryCreate>,
+) -> ApiResult<Response> {
+    let name = canonical_zone_name(&req.name).map_err(|e| validation_field("name", &e))?;
+    let primary = crate::dns::secondary::parse_primary(req.primary.trim())
+        .map_err(|e| validation_field("primary", &e.to_string()))?;
+
+    // Create the zone shell + secondary marker.
+    let soa = Soa::default_for(&name);
+    let name_db = name.clone();
+    let primary_str = primary.to_string();
+    let zone_id = state
+        .db
+        .run(move |c| {
+            let id = Db::create_zone(c, &name_db, &soa, 300)?;
+            Db::create_secondary(c, id, &primary_str, 3600)?;
+            Ok(id)
+        })
+        .await?;
+
+    // Initial transfer.
+    match crate::dns::secondary::transfer(&state, zone_id, &name, primary).await {
+        Ok(_) => {}
+        Err(e) => {
+            let msg = e.to_string();
+            let _ = state
+                .db
+                .run(move |c| Db::set_secondary_status(c, zone_id, Some(&msg), None))
+                .await;
+        }
+    }
+
+    let zone = state.db.run(move |c| Db::zone(c, zone_id)).await?;
+    Ok(created_json(json!({ "zone": zone })))
+}
+
+pub async fn refresh_secondary(
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+    _auth: Authed,
+) -> ApiResult<Response> {
+    let zone = state
+        .db
+        .run(move |c| Db::zone(c, id))
+        .await?
+        .ok_or_else(|| AppError::not_found("zone not found"))?;
+    let primary = zone
+        .primary_addr
+        .clone()
+        .ok_or_else(|| AppError::conflict("not a secondary zone"))?;
+    let primary = crate::dns::secondary::parse_primary(&primary)
+        .map_err(|e| AppError::internal(e.to_string()))?;
+
+    crate::dns::secondary::transfer(&state, id, &zone.name, primary)
+        .await
+        .map_err(|e| {
+            AppError::new(StatusCode::BAD_GATEWAY, "transfer_failed", e.to_string())
+        })?;
+    let zone = state.db.run(move |c| Db::zone(c, id)).await?;
+    Ok(ok_json(json!({ "zone": zone })))
+}
+
 #[derive(Deserialize)]
 pub struct ZoneImport {
     zonefile: String,
@@ -582,6 +661,12 @@ pub async fn import_zone(
 
     let origin = hickory_proto::rr::Name::from_utf8(format!("{}.", zone.name))
         .map_err(|e| validation_field("zonefile", &format!("bad origin: {e}")))?;
+
+    if zone.is_secondary {
+        return Err(AppError::conflict(
+            "zone is a secondary; its records are managed by transfer",
+        ));
+    }
 
     let (records, skipped) = parse_zonefile(&req.zonefile, &origin, &zone.name)
         .map_err(|e| validation_field("zonefile", &e))?;
@@ -675,6 +760,11 @@ pub async fn create_record(
         .run(move |c| Db::zone(c, zone_id))
         .await?
         .ok_or_else(|| AppError::not_found("zone not found"))?;
+    if zone.is_secondary {
+        return Err(AppError::conflict(
+            "zone is a secondary; its records are managed by transfer",
+        ));
+    }
 
     let rtype = parse_record_type(&req.rtype).map_err(|e| validation_field("type", &e))?;
     // Validate the data parses (and qualify relative names to the zone).

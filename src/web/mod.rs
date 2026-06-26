@@ -65,6 +65,11 @@ pub fn router(state: SharedState) -> Router {
         .route("/api/zones/{id}/export", get(api::export_zone))
         .route("/api/zones/{id}/import", post(api::import_zone))
         .route(
+            "/api/secondary-zones",
+            get(api::list_secondaries).post(api::create_secondary),
+        )
+        .route("/api/secondary-zones/{id}/refresh", post(api::refresh_secondary))
+        .route(
             "/api/records/{id}",
             put(api::update_record).delete(api::delete_record),
         )

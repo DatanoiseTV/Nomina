@@ -116,6 +116,16 @@ CREATE TABLE IF NOT EXISTS conditional_forwards (
     enabled    INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL
 );
+
+-- A zone that is a secondary (replicated from a primary via AXFR).
+CREATE TABLE IF NOT EXISTS secondary_zones (
+    zone_id      INTEGER PRIMARY KEY REFERENCES zones(id) ON DELETE CASCADE,
+    primary_addr TEXT NOT NULL,
+    refresh_secs INTEGER NOT NULL DEFAULT 3600,
+    last_check   TEXT,
+    last_error   TEXT,
+    created_at   TEXT NOT NULL
+);
 "#;
 
 #[derive(Clone)]
@@ -426,8 +436,10 @@ impl Db {
         let mut stmt = conn.prepare(
             "SELECT z.id, z.name, z.enabled, z.soa, z.default_ttl, z.serial,
                     z.created_at, z.updated_at,
-                    (SELECT COUNT(*) FROM records r WHERE r.zone_id = z.id) AS rc
-             FROM zones z ORDER BY z.name ASC",
+                    (SELECT COUNT(*) FROM records r WHERE r.zone_id = z.id) AS rc,
+                    s.primary_addr, s.last_check, s.last_error
+             FROM zones z LEFT JOIN secondary_zones s ON s.zone_id = z.id
+             ORDER BY z.name ASC",
         )?;
         let rows = stmt
             .query_map([], Self::map_zone)?
@@ -439,8 +451,10 @@ impl Db {
         conn.query_row(
             "SELECT z.id, z.name, z.enabled, z.soa, z.default_ttl, z.serial,
                     z.created_at, z.updated_at,
-                    (SELECT COUNT(*) FROM records r WHERE r.zone_id = z.id) AS rc
-             FROM zones z WHERE z.id = ?1",
+                    (SELECT COUNT(*) FROM records r WHERE r.zone_id = z.id) AS rc,
+                    s.primary_addr, s.last_check, s.last_error
+             FROM zones z LEFT JOIN secondary_zones s ON s.zone_id = z.id
+             WHERE z.id = ?1",
             params![id],
             Self::map_zone,
         )
@@ -502,6 +516,7 @@ impl Db {
     fn map_zone(r: &rusqlite::Row) -> rusqlite::Result<Zone> {
         let soa_json: String = r.get(3)?;
         let soa: Soa = serde_json::from_str(&soa_json).map_err(json_err)?;
+        let primary_addr: Option<String> = r.get(9)?;
         Ok(Zone {
             id: r.get(0)?,
             name: r.get(1)?,
@@ -512,6 +527,10 @@ impl Db {
             created_at: r.get(6)?,
             updated_at: r.get(7)?,
             record_count: r.get(8)?,
+            is_secondary: primary_addr.is_some(),
+            primary_addr,
+            last_check: r.get(10)?,
+            last_error: r.get(11)?,
         })
     }
 
@@ -998,6 +1017,97 @@ impl Db {
             enabled: r.get::<_, i64>(3)? != 0,
             created_at: r.get(4)?,
         })
+    }
+
+    // ----- secondary zones -------------------------------------------------
+
+    pub fn list_secondaries(conn: &Connection) -> rusqlite::Result<Vec<SecondaryZone>> {
+        let mut stmt = conn.prepare(
+            "SELECT s.zone_id, z.name, s.primary_addr, s.refresh_secs, z.serial,
+                    (SELECT COUNT(*) FROM records r WHERE r.zone_id = z.id) AS rc,
+                    s.last_check, s.last_error
+             FROM secondary_zones s JOIN zones z ON z.id = s.zone_id
+             ORDER BY z.name ASC",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(SecondaryZone {
+                    zone_id: r.get(0)?,
+                    name: r.get(1)?,
+                    primary_addr: r.get(2)?,
+                    refresh_secs: r.get(3)?,
+                    serial: r.get(4)?,
+                    record_count: r.get(5)?,
+                    last_check: r.get(6)?,
+                    last_error: r.get(7)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn create_secondary(
+        conn: &Connection,
+        zone_id: i64,
+        primary_addr: &str,
+        refresh_secs: i64,
+    ) -> rusqlite::Result<()> {
+        conn.execute(
+            "INSERT INTO secondary_zones (zone_id, primary_addr, refresh_secs, created_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![zone_id, primary_addr, refresh_secs, now()],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_secondary_status(
+        conn: &Connection,
+        zone_id: i64,
+        last_error: Option<&str>,
+        refresh_secs: Option<i64>,
+    ) -> rusqlite::Result<()> {
+        conn.execute(
+            "UPDATE secondary_zones SET last_check = ?1, last_error = ?2 WHERE zone_id = ?3",
+            params![now(), last_error, zone_id],
+        )?;
+        if let Some(r) = refresh_secs {
+            conn.execute(
+                "UPDATE secondary_zones SET refresh_secs = ?1 WHERE zone_id = ?2",
+                params![r, zone_id],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Replace a secondary zone's SOA, serial, and records from a transfer.
+    pub fn replace_secondary_zone(
+        conn: &mut Connection,
+        zone_id: i64,
+        soa: &Soa,
+        serial: u32,
+        records: &[(String, String, u32, String)],
+    ) -> rusqlite::Result<usize> {
+        let soa_json = serde_json::to_string(soa).map_err(json_err)?;
+        let ts = now();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "UPDATE zones SET soa = ?1, serial = ?2, updated_at = ?3 WHERE id = ?4",
+            params![soa_json, serial, ts, zone_id],
+        )?;
+        tx.execute("DELETE FROM records WHERE zone_id = ?1", params![zone_id])?;
+        let mut count = 0;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO records (zone_id, view_id, name, rtype, ttl, data, enabled, created_at, updated_at)
+                 VALUES (?1, NULL, ?2, ?3, ?4, ?5, 1, ?6, ?6)",
+            )?;
+            for (name, rtype, ttl, data) in records {
+                stmt.execute(params![zone_id, name, rtype, ttl, data, ts])?;
+                count += 1;
+            }
+        }
+        tx.commit()?;
+        Ok(count)
     }
 }
 

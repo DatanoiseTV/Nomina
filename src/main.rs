@@ -162,6 +162,9 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // Refresh secondary zones from their primaries on an SOA-driven schedule.
+    tokio::spawn(dns::secondary::poll_loop(state.clone()));
+
     // TLS material (shared by web/DoT/DoH/DoQ) if any TLS listener is enabled.
     let (web_tls, dot_tls, doh_tls, doq_tls) = if config.tls_required() {
         let material = tls::load_or_generate(&config)?;
