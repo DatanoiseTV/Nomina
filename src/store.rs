@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::net::IpAddr;
+use std::sync::Arc;
 
 use hickory_proto::op::ResponseCode;
 use hickory_proto::rr::rdata::SOA;
@@ -14,6 +15,7 @@ use ipnet::IpNet;
 use tracing::warn;
 
 use crate::db::Db;
+use crate::dns::dnssec::ZoneSigner;
 use crate::models::{parse_rdata, record_fqdn_name, soa_rname};
 
 /// A resolved split-horizon view with its parsed CIDR set.
@@ -46,6 +48,8 @@ pub struct StoredZone {
     soa_ttl: u32,
     /// Owner FQDN (lowercase, no trailing dot) -> records at that name.
     records: HashMap<String, Vec<StoredRecord>>,
+    /// Present when the zone is DNSSEC-signed.
+    signer: Option<Arc<ZoneSigner>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -136,12 +140,24 @@ impl ZoneStore {
                 z.soa.minimum,
             );
 
+            let signer = match Db::dnssec_secret(conn, z.id) {
+                Ok(Some(secret)) => match ZoneSigner::build(apex.clone(), z.default_ttl, &secret) {
+                    Ok(s) => Some(Arc::new(s)),
+                    Err(e) => {
+                        warn!(zone = %z.name, "DNSSEC disabled (key error): {e}");
+                        None
+                    }
+                },
+                _ => None,
+            };
+
             let mut zone = StoredZone {
                 label_count: apex.num_labels() as usize,
                 apex,
                 soa_ttl: z.soa.minimum.max(1),
                 soa,
                 records: HashMap::new(),
+                signer,
             };
 
             let records = Db::list_records(conn, z.id).unwrap_or_default();
@@ -402,6 +418,26 @@ impl ZoneStore {
 
         out.push(soa);
         Some(out)
+    }
+
+    /// The DNSSEC signer for the zone covering `qname`, if signed.
+    pub fn signer_for(&self, qname: &Name) -> Option<Arc<ZoneSigner>> {
+        self.zone_for(qname).and_then(|z| z.signer.clone())
+    }
+
+    /// Distinct record types present at `qname` (for the NSEC type bitmap).
+    pub fn present_types(&self, qname: &Name) -> Vec<RecordType> {
+        let Some(zone) = self.zone_for(qname) else {
+            return vec![];
+        };
+        let key = name_key(qname);
+        let mut types = std::collections::BTreeSet::new();
+        if let Some(recs) = Self::records_at(zone, &key) {
+            for r in recs {
+                types.insert(r.rtype);
+            }
+        }
+        types.into_iter().collect()
     }
 
     pub fn zone_count(&self) -> usize {

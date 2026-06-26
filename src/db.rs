@@ -117,6 +117,14 @@ CREATE TABLE IF NOT EXISTS conditional_forwards (
     created_at TEXT NOT NULL
 );
 
+-- Per-zone DNSSEC signing key (base64 PKCS#8 DER). Presence = signed zone.
+CREATE TABLE IF NOT EXISTS dnssec_keys (
+    zone_id    INTEGER PRIMARY KEY REFERENCES zones(id) ON DELETE CASCADE,
+    algorithm  INTEGER NOT NULL,
+    secret     TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
 -- A zone that is a secondary (replicated from a primary via AXFR).
 CREATE TABLE IF NOT EXISTS secondary_zones (
     zone_id      INTEGER PRIMARY KEY REFERENCES zones(id) ON DELETE CASCADE,
@@ -437,7 +445,8 @@ impl Db {
             "SELECT z.id, z.name, z.enabled, z.soa, z.default_ttl, z.serial,
                     z.created_at, z.updated_at,
                     (SELECT COUNT(*) FROM records r WHERE r.zone_id = z.id) AS rc,
-                    s.primary_addr, s.last_check, s.last_error
+                    s.primary_addr, s.last_check, s.last_error,
+                    (SELECT EXISTS(SELECT 1 FROM dnssec_keys d WHERE d.zone_id = z.id)) AS dnssec
              FROM zones z LEFT JOIN secondary_zones s ON s.zone_id = z.id
              ORDER BY z.name ASC",
         )?;
@@ -452,7 +461,8 @@ impl Db {
             "SELECT z.id, z.name, z.enabled, z.soa, z.default_ttl, z.serial,
                     z.created_at, z.updated_at,
                     (SELECT COUNT(*) FROM records r WHERE r.zone_id = z.id) AS rc,
-                    s.primary_addr, s.last_check, s.last_error
+                    s.primary_addr, s.last_check, s.last_error,
+                    (SELECT EXISTS(SELECT 1 FROM dnssec_keys d WHERE d.zone_id = z.id)) AS dnssec
              FROM zones z LEFT JOIN secondary_zones s ON s.zone_id = z.id
              WHERE z.id = ?1",
             params![id],
@@ -531,6 +541,7 @@ impl Db {
             primary_addr,
             last_check: r.get(10)?,
             last_error: r.get(11)?,
+            dnssec: r.get::<_, i64>(12)? != 0,
         })
     }
 
@@ -1017,6 +1028,38 @@ impl Db {
             enabled: r.get::<_, i64>(3)? != 0,
             created_at: r.get(4)?,
         })
+    }
+
+    // ----- DNSSEC keys -----------------------------------------------------
+
+    pub fn create_dnssec_key(
+        conn: &Connection,
+        zone_id: i64,
+        algorithm: i64,
+        secret: &str,
+    ) -> rusqlite::Result<()> {
+        conn.execute(
+            "INSERT INTO dnssec_keys (zone_id, algorithm, secret, created_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(zone_id) DO UPDATE SET algorithm = excluded.algorithm,
+                 secret = excluded.secret, created_at = excluded.created_at",
+            params![zone_id, algorithm, secret, now()],
+        )?;
+        Ok(())
+    }
+
+    pub fn dnssec_secret(conn: &Connection, zone_id: i64) -> rusqlite::Result<Option<String>> {
+        conn.query_row(
+            "SELECT secret FROM dnssec_keys WHERE zone_id = ?1",
+            params![zone_id],
+            |r| r.get(0),
+        )
+        .optional()
+    }
+
+    pub fn delete_dnssec_key(conn: &Connection, zone_id: i64) -> rusqlite::Result<()> {
+        conn.execute("DELETE FROM dnssec_keys WHERE zone_id = ?1", params![zone_id])?;
+        Ok(())
     }
 
     // ----- secondary zones -------------------------------------------------

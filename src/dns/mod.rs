@@ -3,6 +3,7 @@
 
 pub mod axfr;
 pub mod conditional;
+pub mod dnssec;
 pub mod doh;
 pub mod handler;
 pub mod resolve;

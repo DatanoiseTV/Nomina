@@ -61,14 +61,25 @@ impl RequestHandler for DnsHandler {
                 .await;
         }
 
-        let out = resolve_query(&self.state, &qname, qtype, client).await;
+        let dnssec_ok = request
+            .edns
+            .as_ref()
+            .map(|e| e.flags().dnssec_ok)
+            .unwrap_or(false);
+        let out = resolve_query(&self.state, &qname, qtype, client, dnssec_ok).await;
 
         let mut meta = Metadata::response_from_request(info.metadata);
         meta.authoritative = out.authoritative;
         meta.recursion_available = out.recursion_available;
         meta.response_code = out.rcode;
 
-        let builder = MessageResponseBuilder::from_message_request(request);
+        let mut builder = MessageResponseBuilder::from_message_request(request);
+        // Echo the client's OPT (with DO) so the response carries EDNS/DNSSEC OK.
+        if dnssec_ok {
+            if let Some(edns) = &request.edns {
+                builder.edns(edns);
+            }
+        }
         let response = builder.build(
             meta,
             out.answers.iter(),

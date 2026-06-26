@@ -72,7 +72,12 @@ async fn handle(state: SharedState, client: std::net::IpAddr, bytes: Vec<u8>) ->
 
     let qname = query.name().clone();
     let qtype = query.query_type();
-    let out = resolve_query(&state, &qname, qtype, client).await;
+    let dnssec_ok = request
+        .edns
+        .as_ref()
+        .map(|e| e.flags().dnssec_ok)
+        .unwrap_or(false);
+    let out = resolve_query(&state, &qname, qtype, client, dnssec_ok).await;
 
     let mut response = Message::response(request.metadata.id, request.metadata.op_code);
     response.metadata.recursion_desired = request.metadata.recursion_desired;
@@ -82,6 +87,11 @@ async fn handle(state: SharedState, client: std::net::IpAddr, bytes: Vec<u8>) ->
     response.add_query(query);
     response.add_answers(out.answers);
     response.authorities = out.authority;
+    if dnssec_ok {
+        if let Some(edns) = &request.edns {
+            response.edns = Some(edns.clone());
+        }
+    }
 
     match response.to_vec() {
         Ok(buf) => ([(header::CONTENT_TYPE, DNS_MESSAGE)], buf).into_response(),

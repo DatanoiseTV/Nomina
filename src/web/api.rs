@@ -717,6 +717,69 @@ fn parse_zonefile(
 }
 
 // ---------------------------------------------------------------------------
+// DNSSEC
+// ---------------------------------------------------------------------------
+
+async fn dnssec_status(state: &SharedState, zone_name: &str) -> ApiResult<Response> {
+    let apex = record_fqdn_name("@", zone_name)
+        .map_err(|e| AppError::internal(format!("bad apex: {e}")))?;
+    match state.store().signer_for(&apex) {
+        Some(signer) => Ok(ok_json(json!({
+            "enabled": true,
+            "algorithm": "ECDSAP256SHA256",
+            "key_tag": signer.key_tag(),
+            "dnskey": signer.dnskey_text(),
+            "ds": signer.ds_text().ok(),
+        }))),
+        None => Ok(ok_json(json!({ "enabled": false }))),
+    }
+}
+
+pub async fn get_dnssec(
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+    _auth: Authed,
+) -> ApiResult<Response> {
+    let zone = state
+        .db
+        .run(move |c| Db::zone(c, id))
+        .await?
+        .ok_or_else(|| AppError::not_found("zone not found"))?;
+    dnssec_status(&state, &zone.name).await
+}
+
+pub async fn enable_dnssec(
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+    _auth: Authed,
+) -> ApiResult<Response> {
+    let zone = state
+        .db
+        .run(move |c| Db::zone(c, id))
+        .await?
+        .ok_or_else(|| AppError::not_found("zone not found"))?;
+    let secret = crate::dns::dnssec::generate_secret()
+        .map_err(|e| AppError::internal(e.to_string()))?;
+    // Algorithm 13 = ECDSAP256SHA256.
+    state
+        .db
+        .run(move |c| Db::create_dnssec_key(c, id, 13, &secret))
+        .await?;
+    state.reload_store()?;
+    dnssec_status(&state, &zone.name).await
+}
+
+pub async fn disable_dnssec(
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+    _auth: Authed,
+) -> ApiResult<Response> {
+    state.db.run(move |c| Db::delete_dnssec_key(c, id)).await?;
+    state.reload_store()?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+// ---------------------------------------------------------------------------
 // Records
 // ---------------------------------------------------------------------------
 

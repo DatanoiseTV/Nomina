@@ -16,7 +16,7 @@ axum = { version = "0.8", features = ["macros"] }
 base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
 futures-util = "0.3"
-hickory-proto = "0.26"
+hickory-proto = { version = "0.26", features = ["dnssec-ring"] }
 hickory-resolver = { version = "0.26", features = ["tokio", "system-config", "tls-ring", "https-ring", "recursor"] }
 hickory-server = { version = "0.26", features = ["tls-ring", "https-ring", "quic-ring"] }
 hyper = { version = "1", features = ["server", "http1", "http2"] }

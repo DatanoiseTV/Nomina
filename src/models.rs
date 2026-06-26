@@ -73,6 +73,8 @@ pub struct Zone {
     pub primary_addr: Option<String>,
     pub last_check: Option<String>,
     pub last_error: Option<String>,
+    /// Set when the zone is DNSSEC-signed.
+    pub dnssec: bool,
     pub created_at: String,
     pub updated_at: String,
 }

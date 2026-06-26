@@ -9,11 +9,12 @@ use hickory_proto::op::ResponseCode;
 use hickory_proto::rr::rdata::{A, AAAA, CNAME};
 use hickory_proto::rr::{Name, RData, Record, RecordType};
 
+use crate::dns::dnssec::ZoneSigner;
 use crate::filter::{Decision, RewriteTarget};
 use crate::models::BlockMode;
 use crate::state::AppState;
 use crate::stats::QueryOutcome;
-use crate::store::Outcome;
+use crate::store::{Outcome, ZoneStore};
 
 const SINKHOLE_TTL: u32 = 60;
 const REWRITE_TTL: u32 = 300;
@@ -26,19 +27,40 @@ pub struct ResolveOutput {
     pub recursion_available: bool,
 }
 
-/// Resolve a single query and record statistics.
+/// Resolve a single query and record statistics. `dnssec_ok` reflects the
+/// client's EDNS DO bit; when set on a signed zone the response is signed.
 pub async fn resolve_query(
     state: &AppState,
     qname: &Name,
     qtype: RecordType,
     client: IpAddr,
+    dnssec_ok: bool,
 ) -> ResolveOutput {
     let recursion_available = state.upstream().is_some();
     let store = state.store();
+
+    // Apex DNSKEY is synthesized from the zone's signing key, not stored.
+    if dnssec_ok && qtype == RecordType::DNSKEY {
+        if let Some(signer) = store.signer_for(qname) {
+            if same_name(qname, &signer.apex) {
+                let out = ResolveOutput {
+                    answers: signer.dnskey_rrset(),
+                    authority: vec![],
+                    rcode: ResponseCode::NoError,
+                    authoritative: true,
+                    recursion_available,
+                };
+                record_stat(state, client, None, qname, qtype, QueryOutcome::Authoritative, &out);
+                return out;
+            }
+        }
+    }
+
     let result = store.lookup(qname, qtype, client);
     let view = result.view_name.clone();
+    let outcome = result.outcome;
 
-    let (out, stat) = match result.outcome {
+    let (mut out, stat) = match outcome {
         Outcome::Authoritative | Outcome::NoData => (
             ResolveOutput {
                 answers: result.answers,
@@ -62,6 +84,13 @@ pub async fn resolve_query(
         Outcome::NotAuthoritative => resolve_external(state, qname, qtype, recursion_available).await,
     };
 
+    // DNSSEC: sign authoritative answers / prove denials on signed zones.
+    if dnssec_ok && outcome != Outcome::NotAuthoritative {
+        if let Some(signer) = store.signer_for(qname) {
+            apply_dnssec(&signer, &store, qname, outcome, &mut out);
+        }
+    }
+
     state.stats.record(
         state.query_log(),
         client,
@@ -72,6 +101,60 @@ pub async fn resolve_query(
         format!("{:?}", out.rcode).to_uppercase(),
     );
     out
+}
+
+fn same_name(a: &Name, b: &Name) -> bool {
+    a.to_string()
+        .trim_end_matches('.')
+        .eq_ignore_ascii_case(b.to_string().trim_end_matches('.'))
+}
+
+fn record_stat(
+    state: &AppState,
+    client: IpAddr,
+    view: Option<String>,
+    qname: &Name,
+    qtype: RecordType,
+    stat: QueryOutcome,
+    out: &ResolveOutput,
+) {
+    state.stats.record(
+        state.query_log(),
+        client,
+        view,
+        qname.to_string().trim_end_matches('.').to_string(),
+        qtype.to_string(),
+        stat,
+        format!("{:?}", out.rcode).to_uppercase(),
+    );
+}
+
+/// Sign authoritative answers, or prove a denial (black-lies NSEC), on a signed
+/// zone.
+fn apply_dnssec(
+    signer: &ZoneSigner,
+    store: &ZoneStore,
+    qname: &Name,
+    outcome: Outcome,
+    out: &mut ResolveOutput,
+) {
+    match outcome {
+        Outcome::Authoritative => signer.sign_records(&mut out.answers),
+        Outcome::NoData => {
+            let ttl = out.authority.first().map(|r| r.ttl).unwrap_or(60);
+            signer.sign_records(&mut out.authority);
+            let present = store.present_types(qname);
+            out.authority.extend(signer.nsec_records(qname, &present, ttl));
+        }
+        Outcome::NxDomain => {
+            // Black lie: return NOERROR with a signed NSEC denying the name.
+            out.rcode = ResponseCode::NoError;
+            let ttl = out.authority.first().map(|r| r.ttl).unwrap_or(60);
+            signer.sign_records(&mut out.authority);
+            out.authority.extend(signer.nsec_records(qname, &[], ttl));
+        }
+        Outcome::NotAuthoritative => {}
+    }
 }
 
 /// Names not covered by a local zone: apply rewrites/blocklist, then upstream.
