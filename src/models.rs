@@ -155,8 +155,9 @@ impl Default for ResolutionMode {
 /// What to return for a blocked name. Serialized values match the API contract.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum BlockMode {
-    /// Answer NXDOMAIN.
-    #[serde(rename = "nxdomain")]
+    /// Answer NXDOMAIN. `nx_domain` is accepted for backward compatibility with
+    /// settings persisted by earlier builds.
+    #[serde(rename = "nxdomain", alias = "nx_domain")]
     NxDomain,
     /// Answer 0.0.0.0 / :: (a sinkhole address).
     #[serde(rename = "zero_ip")]
