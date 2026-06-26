@@ -245,16 +245,16 @@ function renderStats(host, stats) {
         )
       ),
 
-      h("div.grid.grid-cards", { style: "margin-bottom:16px" }, [
+      h("div", { style: "display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;margin-bottom:16px" }, [
         h("div.card.section", [
           h("div.card-head", [h("h2", "Resolution latency")]),
           h("div.card-pad", [
-            h("div.grid.grid-cards", [
+            h("div", { style: "display:flex;gap:10px;flex-wrap:wrap" }, [
               latStat("Minimum", lat.min_ms),
               latStat("Average", lat.avg_ms),
               latStat("Median", lat.median_ms),
               latStat("Maximum", lat.max_ms),
-            ]),
+            ].map((s) => (s.style.flex = "1 1 110px", s))),
             h("div.inline-note", { style: "margin-top:6px" },
               `End-to-end resolution time over the last ${fmtInt(lat.count || 0)} queries.`),
           ]),
@@ -262,12 +262,12 @@ function renderStats(host, stats) {
         h("div.card.section", [
           h("div.card-head", [h("h2", "Cache")]),
           h("div.card-pad", [
-            h("div.grid.grid-cards", [
+            h("div", { style: "display:flex;gap:10px;flex-wrap:wrap" }, [
               cacheStat("Hit rate", hitPct),
               cacheStat("Hits", fmtInt(cache.hits || 0)),
               cacheStat("Misses", fmtInt(cache.misses || 0)),
               cacheStat("Entries", fmtInt(cache.size || 0)),
-            ]),
+            ].map((s) => (s.style.flex = "1 1 110px", s))),
             h("div.inline-note", { style: "margin-top:6px" },
               "Edge cache in front of the upstream resolver."),
           ]),
