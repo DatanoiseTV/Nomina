@@ -54,8 +54,9 @@ impl RequestHandler for DnsHandler {
             };
         }
 
-        // AXFR zone transfer (TCP/DoT only, IP-allowlisted).
-        if qtype == RecordType::AXFR {
+        // Zone transfer (TCP/DoT only, IP-allowlisted). IXFR is answered with a
+        // full transfer per RFC 1995 (fallback when no incremental journal applies).
+        if matches!(qtype, RecordType::AXFR | RecordType::IXFR) {
             return self
                 .handle_axfr(request, info.metadata, info.protocol, &qname, client, response_handle)
                 .await;
