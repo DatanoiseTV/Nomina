@@ -101,6 +101,7 @@ export const api = {
   // ---- Status / stats ----
   status: () => request("GET", "/api/status"),
   stats: () => request("GET", "/api/stats"),
+  clearStats: () => request("POST", "/api/stats/clear"),
 
   // ---- Views ----
   listViews: () => request("GET", "/api/views"),

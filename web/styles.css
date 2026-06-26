@@ -613,6 +613,25 @@ dialog::backdrop { background: rgba(10, 14, 22, 0.5); backdrop-filter: blur(2px)
 .qtype-bar .bar > span { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
 .qtype-bar .num { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-muted); }
 
+/* Amber stat (e.g. blocked counter). */
+.stat-warn .value { color: var(--warning); }
+/* Compact stat (qps figures). */
+.stat-sm .value { font-size: 1.35rem; }
+
+/* Per-second SVG bar chart (sparkline). Theme-aware via CSS fill. */
+.sparkline-wrap {
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+}
+.sparkline { display: block; width: 100%; height: 72px; }
+.spark-bar { fill: var(--accent); }
+
+/* Top-domains inline magnitude bar under the name. */
+.top-bar { height: 4px; border-radius: 999px; background: var(--bg-sunken); overflow: hidden; margin-top: 5px; }
+.top-bar > span { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+
 /* ============ Auth screens ============ */
 .auth-wrap {
   min-height: 100vh;
