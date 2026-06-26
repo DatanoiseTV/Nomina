@@ -180,6 +180,8 @@ impl Stats {
         self.started.elapsed().as_secs()
     }
 
+    /// Record a query. Returns the logged [`RecentQuery`] when per-query logging
+    /// is enabled (so the caller can persist it), or `None` when logging is off.
     pub fn record(
         &self,
         mode: QueryLog,
@@ -189,7 +191,7 @@ impl Stats {
         qtype: String,
         outcome: QueryOutcome,
         rcode: String,
-    ) {
+    ) -> Option<RecentQuery> {
         // Aggregate, non-identifying counters — always collected.
         self.counters.total.fetch_add(1, Ordering::Relaxed);
         match outcome {
@@ -223,7 +225,7 @@ impl Stats {
 
         // Per-query detail is gated by the privacy setting.
         if mode == QueryLog::Off {
-            return;
+            return None;
         }
 
         if outcome == QueryOutcome::Blocked {
@@ -256,7 +258,8 @@ impl Stats {
         if r.len() == RECENT_CAPACITY {
             r.pop_front();
         }
-        r.push_back(entry);
+        r.push_back(entry.clone());
+        Some(entry)
     }
 
     /// Clear retained per-query detail (recent queries + top domains).

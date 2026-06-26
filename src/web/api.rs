@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::header::SET_COOKIE;
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -119,6 +119,57 @@ pub async fn stats(State(state): State<SharedState>, _auth: Authed) -> Response 
 pub async fn clear_stats(State(state): State<SharedState>, _auth: Authed) -> Response {
     state.stats.clear_log();
     StatusCode::NO_CONTENT.into_response()
+}
+
+#[derive(Deserialize)]
+pub struct QueryLogParams {
+    page: Option<i64>,
+    per_page: Option<i64>,
+    q: Option<String>,
+    outcome: Option<String>,
+    qtype: Option<String>,
+    sort: Option<String>,
+    desc: Option<bool>,
+}
+
+/// Paginated, filterable, sortable persistent query log.
+pub async fn query_log(
+    State(state): State<SharedState>,
+    _auth: Authed,
+    Query(p): Query<QueryLogParams>,
+) -> ApiResult<Response> {
+    let page = p.page.unwrap_or(1).max(1);
+    let per_page = p.per_page.unwrap_or(50).clamp(1, 500);
+    let offset = (page - 1) * per_page;
+    let sort = p.sort.unwrap_or_else(|| "at".into());
+    let desc = p.desc.unwrap_or(true);
+    let (rows, total) = state
+        .db
+        .run(move |c| {
+            Db::query_log_page(
+                c,
+                p.q.as_deref(),
+                p.outcome.as_deref(),
+                p.qtype.as_deref(),
+                &sort,
+                desc,
+                per_page,
+                offset,
+            )
+        })
+        .await?;
+    Ok(ok_json(json!({
+        "queries": rows,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+    })))
+}
+
+/// Clear the persistent query log.
+pub async fn clear_query_log(State(state): State<SharedState>, _auth: Authed) -> ApiResult<Response> {
+    state.db.run(|c| Db::prune_query_log(c, 0)).await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 // ---------------------------------------------------------------------------

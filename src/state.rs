@@ -34,9 +34,11 @@ pub struct AppState {
     filter: RwLock<Arc<FilterSet>>,
     settings: RwLock<Settings>,
     throttle: Mutex<LoginThrottle>,
+    qlog_tx: tokio::sync::mpsc::Sender<crate::stats::RecentQuery>,
 }
 
 impl AppState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         db: Db,
         config: Arc<Config>,
@@ -45,6 +47,7 @@ impl AppState {
         conditional: ConditionalSet,
         filter: FilterSet,
         settings: Settings,
+        qlog_tx: tokio::sync::mpsc::Sender<crate::stats::RecentQuery>,
     ) -> Self {
         Self {
             db,
@@ -56,7 +59,14 @@ impl AppState {
             filter: RwLock::new(Arc::new(filter)),
             settings: RwLock::new(settings),
             throttle: Mutex::new(LoginThrottle::default()),
+            qlog_tx,
         }
+    }
+
+    /// Queue a query-log entry for async persistence. Drops the entry (rather
+    /// than blocking the resolver) if the writer is backed up.
+    pub fn log_query(&self, entry: crate::stats::RecentQuery) {
+        let _ = self.qlog_tx.try_send(entry);
     }
 
     /// Snapshot the current authoritative store (cheap Arc clone).

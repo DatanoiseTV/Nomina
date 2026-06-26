@@ -108,7 +108,7 @@ pub async fn resolve_query(
         }
     }
 
-    state.stats.record(
+    if let Some(entry) = state.stats.record(
         state.query_log(),
         client,
         view,
@@ -116,7 +116,9 @@ pub async fn resolve_query(
         qtype.to_string(),
         stat,
         format!("{:?}", out.rcode).to_uppercase(),
-    );
+    ) {
+        state.log_query(entry);
+    }
     out
 }
 
@@ -135,7 +137,7 @@ fn record_stat(
     stat: QueryOutcome,
     out: &ResolveOutput,
 ) {
-    state.stats.record(
+    if let Some(entry) = state.stats.record(
         state.query_log(),
         client,
         view,
@@ -143,7 +145,9 @@ fn record_stat(
         qtype.to_string(),
         stat,
         format!("{:?}", out.rcode).to_uppercase(),
-    );
+    ) {
+        state.log_query(entry);
+    }
 }
 
 /// A signed denial proof for `owner`, using NSEC3 when the zone enables it.

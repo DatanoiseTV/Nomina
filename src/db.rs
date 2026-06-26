@@ -14,6 +14,7 @@ use time::format_description::well_known::Rfc3339;
 
 use crate::error::AppError;
 use crate::models::*;
+use crate::stats::RecentQuery;
 
 const SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -724,6 +725,103 @@ impl Db {
     }
 
     // ----- settings --------------------------------------------------------
+
+    // ----- query log -------------------------------------------------------
+
+    /// Batch-insert query-log entries in one transaction.
+    pub fn insert_queries(conn: &mut Connection, entries: &[RecentQuery]) -> rusqlite::Result<()> {
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO query_log (at, client, view, name, qtype, outcome, rcode)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )?;
+            for e in entries {
+                stmt.execute(params![e.at, e.client, e.view, e.name, e.qtype, e.outcome, e.rcode])?;
+            }
+        }
+        tx.commit()
+    }
+
+    /// Keep only the most recent `max_rows` query-log rows.
+    pub fn prune_query_log(conn: &Connection, max_rows: i64) -> rusqlite::Result<()> {
+        conn.execute(
+            "DELETE FROM query_log WHERE id <= (SELECT COALESCE(MAX(id),0) FROM query_log) - ?1",
+            params![max_rows],
+        )?;
+        Ok(())
+    }
+
+    /// A filtered/sorted/paginated page of the query log, plus the total match
+    /// count. `sort` is one of at|name|client|qtype|outcome; `desc` reverses.
+    #[allow(clippy::too_many_arguments)]
+    pub fn query_log_page(
+        conn: &Connection,
+        search: Option<&str>,
+        outcome: Option<&str>,
+        qtype: Option<&str>,
+        sort: &str,
+        desc: bool,
+        limit: i64,
+        offset: i64,
+    ) -> rusqlite::Result<(Vec<RecentQuery>, i64)> {
+        let mut wh = String::from(" WHERE 1=1");
+        let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        if let Some(s) = search.filter(|s| !s.is_empty()) {
+            wh.push_str(" AND (name LIKE ?1 OR client LIKE ?1)");
+            args.push(Box::new(format!("%{s}%")));
+        }
+        if let Some(o) = outcome.filter(|s| !s.is_empty()) {
+            wh.push_str(&format!(" AND outcome = ?{}", args.len() + 1));
+            args.push(Box::new(o.to_string()));
+        }
+        if let Some(t) = qtype.filter(|s| !s.is_empty()) {
+            wh.push_str(&format!(" AND qtype = ?{}", args.len() + 1));
+            args.push(Box::new(t.to_ascii_uppercase()));
+        }
+
+        let total: i64 = conn.query_row(
+            &format!("SELECT COUNT(*) FROM query_log{wh}"),
+            rusqlite::params_from_iter(args.iter().map(|b| b.as_ref())),
+            |r| r.get(0),
+        )?;
+
+        let col = match sort {
+            "name" => "name",
+            "client" => "client",
+            "qtype" => "qtype",
+            "outcome" => "outcome",
+            _ => "id", // "at" — id is monotonic with time and cheaper
+        };
+        let dir = if desc { "DESC" } else { "ASC" };
+        let lim_idx = args.len() + 1;
+        let off_idx = args.len() + 2;
+        let sql = format!(
+            "SELECT at, client, view, name, qtype, outcome, rcode FROM query_log{wh}
+             ORDER BY {col} {dir} LIMIT ?{lim_idx} OFFSET ?{off_idx}"
+        );
+        args.push(Box::new(limit));
+        args.push(Box::new(offset));
+
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(
+                rusqlite::params_from_iter(args.iter().map(|b| b.as_ref())),
+                |r| {
+                    Ok(RecentQuery {
+                        at: r.get(0)?,
+                        client: r.get(1)?,
+                        view: r.get(2)?,
+                        name: r.get(3)?,
+                        qtype: r.get(4)?,
+                        outcome: r.get(5)?,
+                        rcode: r.get(6)?,
+                    })
+                },
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok((rows, total))
+    }
 
     pub fn get_settings(conn: &Connection) -> rusqlite::Result<Settings> {
         let json: Option<String> = conn

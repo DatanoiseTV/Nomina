@@ -147,6 +147,10 @@ async fn main() -> anyhow::Result<()> {
     let filter = FilterSet::load(&db, settings.blocking_enabled)?;
     let conditional = dns::conditional::ConditionalSet::load(&db, &settings)?;
 
+    // Channel feeding the async query-log writer (bounded; drops under backpressure).
+    let (qlog_tx, mut qlog_rx) =
+        tokio::sync::mpsc::channel::<crate::stats::RecentQuery>(10_000);
+
     let state: SharedState = Arc::new(AppState::new(
         db,
         config.clone(),
@@ -155,7 +159,28 @@ async fn main() -> anyhow::Result<()> {
         conditional,
         filter,
         settings.clone(),
+        qlog_tx,
     ));
+
+    // Background query-log writer: batch-insert and cap the table size.
+    {
+        let db = state.db.clone();
+        tokio::spawn(async move {
+            const MAX_ROWS: i64 = 500_000;
+            let mut buf: Vec<crate::stats::RecentQuery> = Vec::new();
+            loop {
+                let n = qlog_rx.recv_many(&mut buf, 500).await;
+                if n == 0 {
+                    break;
+                }
+                let entries = std::mem::take(&mut buf);
+                if let Err(e) = db.run_mut(move |c| Db::insert_queries(c, &entries)).await {
+                    tracing::warn!("query-log write failed: {e}");
+                }
+                let _ = db.run(move |c| Db::prune_query_log(c, MAX_ROWS)).await;
+            }
+        });
+    }
 
     // Periodically purge expired sessions.
     {
