@@ -3,10 +3,13 @@
 
 use async_trait::async_trait;
 use hickory_proto::op::{Header, HeaderCounts, MessageType, Metadata, OpCode, ResponseCode};
-use hickory_proto::rr::{Name, Record};
+use hickory_proto::rr::{Name, Record, RecordType};
 use hickory_server::net::runtime::Time;
+use hickory_server::net::xfer::Protocol;
 use hickory_server::server::{Request, RequestHandler, ResponseHandler, ResponseInfo};
 use hickory_server::zone_handler::MessageResponseBuilder;
+
+use std::net::IpAddr;
 
 use crate::dns::resolve::resolve_query;
 use crate::state::SharedState;
@@ -51,6 +54,13 @@ impl RequestHandler for DnsHandler {
             };
         }
 
+        // AXFR zone transfer (TCP/DoT only, IP-allowlisted).
+        if qtype == RecordType::AXFR {
+            return self
+                .handle_axfr(request, info.metadata, info.protocol, &qname, client, response_handle)
+                .await;
+        }
+
         let out = resolve_query(&self.state, &qname, qtype, client).await;
 
         let mut meta = Metadata::response_from_request(info.metadata);
@@ -73,6 +83,68 @@ impl RequestHandler for DnsHandler {
                 tracing::warn!(%qname, "failed to send response: {e}");
                 fallback_info(req_id, ResponseCode::ServFail)
             }
+        }
+    }
+}
+
+impl DnsHandler {
+    /// Serve an AXFR zone transfer to an allow-listed secondary over TCP/DoT.
+    async fn handle_axfr<R: ResponseHandler>(
+        &self,
+        request: &Request,
+        req_meta: &Metadata,
+        proto: Protocol,
+        qname: &Name,
+        client: IpAddr,
+        response_handle: R,
+    ) -> ResponseInfo {
+        // AXFR over UDP is invalid; require a connection-oriented transport.
+        if proto == Protocol::Udp {
+            return self.send_code(request, req_meta, response_handle, ResponseCode::Refused).await;
+        }
+        if !self.state.axfr_allowed(client) {
+            tracing::warn!(%client, %qname, "denied AXFR (not allow-listed)");
+            return self.send_code(request, req_meta, response_handle, ResponseCode::Refused).await;
+        }
+
+        match self.state.store().axfr(qname, client) {
+            Some(records) => {
+                let mut handle = response_handle;
+                let mut meta = Metadata::response_from_request(req_meta);
+                meta.authoritative = true;
+                meta.response_code = ResponseCode::NoError;
+                let builder = MessageResponseBuilder::from_message_request(request);
+                let response = builder.build(
+                    meta,
+                    records.iter(),
+                    std::iter::empty::<&Record>(),
+                    std::iter::empty::<&Record>(),
+                    std::iter::empty::<&Record>(),
+                );
+                tracing::info!(%client, %qname, records = records.len(), "served AXFR");
+                match handle.send_response(response).await {
+                    Ok(i) => i,
+                    Err(_) => fallback_info(req_meta.id, ResponseCode::ServFail),
+                }
+            }
+            None => {
+                self.send_code(request, req_meta, response_handle, ResponseCode::Refused).await
+            }
+        }
+    }
+
+    async fn send_code<R: ResponseHandler>(
+        &self,
+        request: &Request,
+        req_meta: &Metadata,
+        mut response_handle: R,
+        code: ResponseCode,
+    ) -> ResponseInfo {
+        let builder = MessageResponseBuilder::from_message_request(request);
+        let response = builder.error_msg(req_meta, code);
+        match response_handle.send_response(response).await {
+            Ok(i) => i,
+            Err(_) => fallback_info(req_meta.id, code),
         }
     }
 }

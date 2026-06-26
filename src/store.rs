@@ -367,6 +367,43 @@ impl ZoneStore {
         }
     }
 
+    /// Build a full AXFR record stream for the zone at `qname` (must be the
+    /// apex), from the requesting client's split-horizon view. The stream is
+    /// bracketed by the SOA per RFC 5936. Returns `None` if no such zone.
+    pub fn axfr(&self, qname: &Name, client: IpAddr) -> Option<Vec<Record>> {
+        let zone = self
+            .zones
+            .iter()
+            .find(|z| name_key(&z.apex) == name_key(qname))?;
+        let view_id = self.view_for(client).map(|(id, _)| id).unwrap_or(i64::MIN);
+
+        let soa = Record::from_rdata(
+            zone.apex.clone(),
+            zone.soa_ttl,
+            RData::SOA(zone.soa.clone()),
+        );
+        let mut out = vec![soa.clone()];
+
+        for (key, recs) in &zone.records {
+            let owner = match Name::from_utf8(format!("{key}.")) {
+                Ok(n) => n,
+                Err(_) => continue,
+            };
+            let mut types = std::collections::BTreeSet::new();
+            for r in recs {
+                types.insert(r.rtype);
+            }
+            for t in types {
+                for r in Self::resolve(recs, view_id, t) {
+                    out.push(Record::from_rdata(owner.clone(), r.ttl, r.rdata.clone()));
+                }
+            }
+        }
+
+        out.push(soa);
+        Some(out)
+    }
+
     pub fn zone_count(&self) -> usize {
         self.zones.len()
     }

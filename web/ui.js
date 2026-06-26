@@ -95,6 +95,10 @@ export const icons = {
   back: `<path d="M19 12H5M12 19l-7-7 7-7"/>`,
   refresh: `<path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.5 9a9 9 0 0 1 14.9-3.4L23 10M1 14l4.6 4.4A9 9 0 0 0 20.5 15"/>`,
   inbox: `<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5.6 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.4A2 2 0 0 0 16.7 4H7.3a2 2 0 0 0-1.8 1.6z"/>`,
+  shield: `<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>`,
+  filter: `<path d="M22 3H2l8 9.5V19l4 2v-8.5L22 3z"/>`,
+  shuffle: `<path d="M16 3h5v5"/><path d="M4 20 21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l5 5"/>`,
+  block: `<circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/>`,
 };
 
 export function icon(name, size) {

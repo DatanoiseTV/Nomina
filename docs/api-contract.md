@@ -200,7 +200,9 @@ Validation errors return `422 validation` with per-field detail.
   "forwarders": [
     { "addr": "1.1.1.1", "protocol": "udp", "port": 53, "tls_name": null }
   ],
-  "forward_enabled": true,
+  "resolution_mode": "forward",
+  "block_mode": "nxdomain",
+  "blocking_enabled": true,
   "cache_size": 1024,
   "cache_min_ttl": 0,
   "cache_max_ttl": 86400,
@@ -208,9 +210,69 @@ Validation errors return `422 validation` with per-field detail.
 }
 ```
 - `protocol` ∈ `udp | tcp | tls | https`. `tls`/`https` require `tls_name`.
+- `resolution_mode` ∈ `forward` (use the `forwarders`) | `recursive` (resolve from
+  the root servers; no upstream needed) | `off` (authoritative-only: REFUSE names
+  outside local zones — for a universal/internal-only nameserver).
+- `block_mode` ∈ `nxdomain | zero_ip | refused` — how blocked names are answered.
+- `blocking_enabled` toggles blocklist filtering (manual rules/rewrites still apply).
 - `GET /api/settings` → `200 { "settings": Settings }`
-- `PUT /api/settings` body partial → `200 { "settings": Settings }`. Applying
-  forwarder/cache changes rebuilds the resolver live (no restart).
+- `PUT /api/settings` body partial → `200 { "settings": Settings }`. Changes rebuild
+  the resolver and reload the filter live (no restart).
+
+### Filtering: blocklists, rules, rewrites
+
+`Blocklist`:
+```json
+{ "id": 1, "name": "StevenBlack", "url": "https://.../hosts", "format": "hosts",
+  "enabled": true, "entry_count": 120000, "last_updated": "...", "last_error": null,
+  "created_at": "..." }
+```
+`format` ∈ `hosts | domains`. Downloaded domains are cached locally (SQLite) so they
+survive restarts and aren't re-fetched on boot.
+
+- `GET /api/blocklists` → `200 { "blocklists": [Blocklist] }`
+- `POST /api/blocklists` body `{ "name","url","format"?,"refresh_now"? }` → `201 { "blocklist": Blocklist }`
+- `PUT /api/blocklists/:id` body `{ "name"?, "enabled"? }` → `200 { "blocklist": Blocklist }`
+- `DELETE /api/blocklists/:id` → `204`
+- `POST /api/blocklists/:id/refresh` → `200 { "blocklist": Blocklist }` (re-fetch one)
+- `POST /api/blocklists/refresh_all` → `200 { "blocklists": [Blocklist] }`
+
+`BlockRule` (manual allow/deny; matches the domain and its subdomains):
+```json
+{ "id": 1, "domain": "ads.example.com", "action": "deny", "comment": null, "created_at": "..." }
+```
+`action` ∈ `deny | allow` (allow exempts a name from blocklists).
+- `GET /api/rules` → `200 { "rules": [BlockRule] }`
+- `POST /api/rules` body `{ "domain","action","comment"? }` → `201 { "rule": BlockRule }`
+- `DELETE /api/rules/:id` → `204`
+
+`Rewrite` (answer a fixed IP or CNAME for a domain + subdomains; applies even in
+authoritative-only mode):
+```json
+{ "id": 1, "domain": "ads.foobar.com", "target": "1.2.3.4", "enabled": true,
+  "comment": null, "created_at": "..." }
+```
+`target` is an IPv4/IPv6 address (→ A/AAAA) or a hostname (→ CNAME).
+- `GET /api/rewrites` → `200 { "rewrites": [Rewrite] }`
+- `POST /api/rewrites` body `{ "domain","target","comment"? }` → `201 { "rewrite": Rewrite }`
+- `PUT /api/rewrites/:id` body `{ "domain"?,"target"?,"enabled"? }` → `200 { "rewrite": Rewrite }`
+- `DELETE /api/rewrites/:id` → `204`
+
+Precedence on a query: **local authoritative zones → rewrite → allow rule → block
+(blocklist/deny rule) → upstream (forward/recursive) → REFUSED (off mode)**.
+
+`GET /api/status` additionally returns: `resolution_mode`, `blocked_domains`
+(count), `rewrite_count`, `active_zone_count`.
+
+`GET /api/stats` additionally returns a `blocked` counter; `outcome` values now
+include `blocked` and `rewritten`.
+
+### DoH endpoint (not part of `/api`)
+
+`GET|POST /dns-query` implements RFC 8484 (DoH). Served on the management port
+(when HTTPS) and on any configured DoH listeners. GET uses `?dns=<base64url>`;
+POST uses an `application/dns-message` body. The TLS peer IP is used for
+split-horizon view selection.
 
 Listen addresses and TLS certificate paths are **startup config** (file/CLI/env),
 not editable via the API, because changing a listen socket needs a restart.

@@ -6,6 +6,7 @@ mod dns;
 mod error;
 mod filter;
 mod models;
+mod privileges;
 mod state;
 mod stats;
 mod store;
@@ -176,22 +177,45 @@ async fn main() -> anyhow::Result<()> {
         (None, None, None)
     };
 
-    // DNS server task (UDP/TCP + DoT).
+    // ---- Bind all listeners while still privileged ----
+    let dns_sockets = dns::server::bind(&config).await?;
+
+    let web_listener = if config.web.disabled {
+        None
+    } else {
+        Some(
+            TcpListener::bind(config.web.listen)
+                .await
+                .map_err(|e| anyhow::anyhow!("binding web {}: {e}", config.web.listen))?,
+        )
+    };
+
+    let mut doh_listeners = Vec::new();
+    if doh_tls.is_some() {
+        for addr in &config.dns.doh_listen {
+            let listener = TcpListener::bind(addr)
+                .await
+                .map_err(|e| anyhow::anyhow!("binding DoH {addr}: {e}"))?;
+            doh_listeners.push((*addr, listener));
+        }
+    }
+
+    // ---- Drop privileges now that privileged sockets are bound ----
+    privileges::drop_privileges(&config.privileges)?;
+
+    // ---- Spawn servers ----
     let dns_handler = DnsHandler::new(state.clone());
     let dns_config = config.clone();
     let dns_task = tokio::spawn(async move {
-        if let Err(e) = dns::server::run(dns_config, dns_handler, dot_tls).await {
+        if let Err(e) = dns::server::run(dns_config, dns_handler, dns_sockets, dot_tls).await {
             tracing::error!("DNS server stopped: {e}");
         }
     });
 
-    // DoH listeners (our own RFC 8484 endpoint, GET + POST).
     if let Some(doh_cfg) = doh_tls {
-        for addr in &config.dns.doh_listen {
-            let listener = TcpListener::bind(addr).await?;
+        for (addr, listener) in doh_listeners {
             let router = dns::doh::router(state.clone());
             let cfg = doh_cfg.clone();
-            let addr = *addr;
             tracing::info!("DNS-over-HTTPS listening on {addr}/dns-query");
             tokio::spawn(async move {
                 if let Err(e) = web::serve_tls(listener, router, cfg).await {
@@ -201,25 +225,26 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // Web server task.
-    let web_task = if config.web.disabled {
-        tracing::info!("management interface disabled");
-        None
-    } else {
-        let app = web::router(state.clone());
-        let web_addr = config.web.listen;
-        let scheme = if config.web.tls { "https" } else { "http" };
-        let listener = TcpListener::bind(web_addr).await?;
-        tracing::info!("management interface on {scheme}://{web_addr}");
-        Some(tokio::spawn(async move {
-            let result = match web_tls {
-                Some(cfg) => web::serve_tls(listener, app, cfg).await,
-                None => web::serve_plain(listener, app).await,
-            };
-            if let Err(e) = result {
-                tracing::error!("web server stopped: {e}");
-            }
-        }))
+    let web_task = match web_listener {
+        None => {
+            tracing::info!("management interface disabled");
+            None
+        }
+        Some(listener) => {
+            let app = web::router(state.clone());
+            let web_addr = config.web.listen;
+            let scheme = if config.web.tls { "https" } else { "http" };
+            tracing::info!("management interface on {scheme}://{web_addr}");
+            Some(tokio::spawn(async move {
+                let result = match web_tls {
+                    Some(cfg) => web::serve_tls(listener, app, cfg).await,
+                    None => web::serve_plain(listener, app).await,
+                };
+                if let Err(e) = result {
+                    tracing::error!("web server stopped: {e}");
+                }
+            }))
+        }
     };
 
     tracing::info!("PicoNS {} started", env!("CARGO_PKG_VERSION"));

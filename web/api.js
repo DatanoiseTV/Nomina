@@ -125,4 +125,23 @@ export const api = {
   // ---- Settings ----
   getSettings: () => request("GET", "/api/settings"),
   updateSettings: (body) => request("PUT", "/api/settings", body),
+
+  // ---- Filtering: blocklists ----
+  listBlocklists: () => request("GET", "/api/blocklists"),
+  createBlocklist: (body) => request("POST", "/api/blocklists", body),
+  updateBlocklist: (id, body) => request("PUT", `/api/blocklists/${id}`, body),
+  deleteBlocklist: (id) => request("DELETE", `/api/blocklists/${id}`),
+  refreshBlocklist: (id) => request("POST", `/api/blocklists/${id}/refresh`, {}),
+  refreshAllBlocklists: () => request("POST", "/api/blocklists/refresh_all", {}),
+
+  // ---- Filtering: rules ----
+  listRules: () => request("GET", "/api/rules"),
+  createRule: (body) => request("POST", "/api/rules", body),
+  deleteRule: (id) => request("DELETE", `/api/rules/${id}`),
+
+  // ---- Filtering: rewrites ----
+  listRewrites: () => request("GET", "/api/rewrites"),
+  createRewrite: (body) => request("POST", "/api/rewrites", body),
+  updateRewrite: (id, body) => request("PUT", `/api/rewrites/${id}`, body),
+  deleteRewrite: (id) => request("DELETE", `/api/rewrites/${id}`),
 };

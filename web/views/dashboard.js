@@ -12,9 +12,17 @@ const OUTCOME_KIND = {
   authoritative: "accent",
   cached: "muted",
   forwarded: "accent",
+  rewritten: "accent",
+  blocked: "warn",
   nxdomain: "warn",
   refused: "danger",
   servfail: "danger",
+};
+
+const RESOLUTION_LABEL = {
+  forward: "Forward",
+  recursive: "Recursive",
+  off: "Authoritative-only",
 };
 
 const RCODE_KIND = {
@@ -40,14 +48,23 @@ export async function renderDashboard(root, { registerCleanup }) {
   clear(root).appendChild(
     h("div", [
       h("div.page-head", [
-        h("div", [h("h1", "Dashboard"), h("div.subtitle", `PicoNS ${status.version}`)]),
+        h("div", { style: "display:flex;align-items:center;gap:10px;flex-wrap:wrap" }, [
+          h("h1", "Dashboard"),
+          status.resolution_mode
+            ? badge(`Resolution: ${RESOLUTION_LABEL[status.resolution_mode] || status.resolution_mode}`, "accent")
+            : null,
+        ]),
+        h("div.subtitle", `PicoNS ${status.version}`),
       ]),
 
       // status cards
       h("div.grid.grid-cards.section", [
-        statCard("Zones", fmtInt(status.zone_count)),
+        statCard("Zones", fmtInt(status.zone_count),
+          status.active_zone_count != null ? `${fmtInt(status.active_zone_count)} active` : null),
         statCard("Records", fmtInt(status.record_count)),
         statCard("Views", fmtInt(status.view_count)),
+        statCard("Blocked domains", fmtInt(status.blocked_domains)),
+        statCard("Rewrites", fmtInt(status.rewrite_count)),
         statCard("Uptime", fmtUptime(status.uptime_seconds),
           status.started_at ? `since ${fmtTime(status.started_at)}` : null),
       ]),
@@ -126,6 +143,7 @@ function renderStats(host, stats) {
     ["Authoritative", stats.authoritative],
     ["Forwarded", stats.forwarded],
     ["Cached", stats.cached],
+    ["Blocked", stats.blocked],
     ["NXDOMAIN", stats.nxdomain],
     ["Refused", stats.refused],
     ["SERVFAIL", stats.servfail],

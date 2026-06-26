@@ -21,6 +21,18 @@ pub struct Config {
     pub dns: DnsConfig,
     pub web: WebConfig,
     pub tls: TlsConfig,
+    pub privileges: PrivilegesConfig,
+}
+
+/// Drop to an unprivileged user/group after binding privileged sockets.
+/// Only effective when the process starts as root on a Unix system.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PrivilegesConfig {
+    /// Username to drop to (e.g. "picons" or "nobody").
+    pub user: Option<String>,
+    /// Group to drop to. Defaults to the user's primary group if unset.
+    pub group: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -41,12 +53,18 @@ pub struct DnsConfig {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct WebConfig {
-    /// Management UI/API listen address.
+    /// Management UI/API listen address. Bind to a specific IP (e.g.
+    /// `127.0.0.1:8053` or a LAN address) to limit reachability.
     pub listen: SocketAddr,
     /// Serve the management interface over HTTPS (recommended).
     pub tls: bool,
     /// Disable the management interface entirely.
     pub disabled: bool,
+    /// Optional CIDR allow-list for the management server. When non-empty, only
+    /// clients in these networks may reach it (defense-in-depth on top of the
+    /// bind address). Note: this also covers DoH if served on this port; use a
+    /// dedicated `doh_listen` for public DoH.
+    pub allow_networks: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -72,6 +90,7 @@ impl Default for Config {
             dns: DnsConfig::default(),
             web: WebConfig::default(),
             tls: TlsConfig::default(),
+            privileges: PrivilegesConfig::default(),
         }
     }
 }
@@ -94,6 +113,7 @@ impl Default for WebConfig {
             listen: "0.0.0.0:8053".parse().unwrap(),
             tls: false,
             disabled: false,
+            allow_networks: Vec::new(),
         }
     }
 }

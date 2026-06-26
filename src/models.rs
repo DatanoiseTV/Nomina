@@ -168,6 +168,10 @@ pub struct Settings {
     pub cache_max_ttl: u32,
     #[serde(default)]
     pub dnssec_validate_upstream: bool,
+    /// CIDRs allowed to request AXFR zone transfers (acting as a primary for
+    /// secondary nameservers). Empty disables zone transfers.
+    #[serde(default)]
+    pub allow_axfr_from: Vec<String>,
 }
 
 fn default_true() -> bool {
@@ -198,6 +202,7 @@ impl Default for Settings {
             cache_min_ttl: 0,
             cache_max_ttl: 86400,
             dnssec_validate_upstream: false,
+            allow_axfr_from: Vec::new(),
         }
     }
 }

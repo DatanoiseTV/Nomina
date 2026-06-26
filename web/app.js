@@ -10,6 +10,9 @@ import { renderZoneDetail } from "./views/zone-detail.js";
 import { renderViews } from "./views/views.js";
 import { renderSettings } from "./views/settings.js";
 import { renderAccount } from "./views/account.js";
+import { renderBlocklists } from "./views/blocklists.js";
+import { renderRules } from "./views/rules.js";
+import { renderRewrites } from "./views/rewrites.js";
 
 // ---- Theme -----------------------------------------------------------------
 const THEME_KEY = "picons-theme";
@@ -54,6 +57,9 @@ const routes = [
   { re: /^\/zones$/, view: renderZones, nav: "zones", title: "Zones" },
   { re: /^\/zones\/(\d+)$/, view: renderZoneDetail, nav: "zones", title: "Zone" },
   { re: /^\/views$/, view: renderViews, nav: "views", title: "Views" },
+  { re: /^\/blocklists$/, view: renderBlocklists, nav: "blocklists", title: "Blocklists" },
+  { re: /^\/rules$/, view: renderRules, nav: "rules", title: "Rules" },
+  { re: /^\/rewrites$/, view: renderRewrites, nav: "rewrites", title: "Rewrites" },
   { re: /^\/settings$/, view: renderSettings, nav: "settings", title: "Settings" },
   { re: /^\/account$/, view: renderAccount, nav: "account", title: "Account" },
 ];
@@ -62,6 +68,11 @@ const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", href: "#/dashboard", icon: "dashboard" },
   { id: "zones", label: "Zones", href: "#/zones", icon: "zones" },
   { id: "views", label: "Views", href: "#/views", icon: "views" },
+  { section: "Filtering" },
+  { id: "blocklists", label: "Blocklists", href: "#/blocklists", icon: "shield" },
+  { id: "rules", label: "Rules", href: "#/rules", icon: "filter" },
+  { id: "rewrites", label: "Rewrites", href: "#/rewrites", icon: "shuffle" },
+  { section: "System" },
   { id: "settings", label: "Settings", href: "#/settings", icon: "settings" },
   { id: "account", label: "Account", href: "#/account", icon: "account" },
 ];
@@ -75,10 +86,12 @@ function currentPath() {
 function buildShell() {
   const nav = h("nav.nav", { "aria-label": "Primary" },
     NAV_ITEMS.map((item) =>
-      h("a", { href: item.href, dataset: { nav: item.id } }, [
-        icon(item.icon, 18),
-        h("span", item.label),
-      ])
+      item.section
+        ? h("div.nav-section", item.section)
+        : h("a", { href: item.href, dataset: { nav: item.id } }, [
+            icon(item.icon, 18),
+            h("span", item.label),
+          ])
     )
   );
 

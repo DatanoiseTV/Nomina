@@ -78,6 +78,16 @@ impl AppState {
         self.settings.read().resolution_mode
     }
 
+    /// Is `ip` allowed to request an AXFR zone transfer?
+    pub fn axfr_allowed(&self, ip: std::net::IpAddr) -> bool {
+        self.settings
+            .read()
+            .allow_axfr_from
+            .iter()
+            .filter_map(|s| s.parse::<ipnet::IpNet>().ok())
+            .any(|n| n.contains(&ip))
+    }
+
     /// Rebuild the in-memory authoritative store from the database.
     pub fn reload_store(&self) -> anyhow::Result<()> {
         let store = ZoneStore::load(&self.db)?;

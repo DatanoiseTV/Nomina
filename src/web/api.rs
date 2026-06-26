@@ -682,6 +682,7 @@ pub struct SettingsUpdate {
     cache_min_ttl: Option<u32>,
     cache_max_ttl: Option<u32>,
     dnssec_validate_upstream: Option<bool>,
+    allow_axfr_from: Option<Vec<String>>,
 }
 
 pub async fn get_settings(State(state): State<SharedState>, _auth: Authed) -> ApiResult<Response> {
@@ -731,6 +732,13 @@ pub async fn put_settings(
     }
     if let Some(v) = req.dnssec_validate_upstream {
         settings.dnssec_validate_upstream = v;
+    }
+    if let Some(v) = req.allow_axfr_from {
+        for cidr in &v {
+            cidr.parse::<ipnet::IpNet>()
+                .map_err(|_| validation_field("allow_axfr_from", &format!("invalid CIDR: {cidr}")))?;
+        }
+        settings.allow_axfr_from = v;
     }
 
     let to_store = settings.clone();

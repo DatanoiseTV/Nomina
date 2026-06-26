@@ -10,9 +10,12 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
+use axum::extract::{ConnectInfo, Request as ExtractRequest, State};
 use axum::http::{HeaderName, HeaderValue, Request, StatusCode, Uri, header};
+use axum::middleware::{Next, from_fn_with_state};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
+use ipnet::IpNet;
 use hyper::body::Incoming;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use rust_embed::Embed;
@@ -81,11 +84,23 @@ pub fn router(state: SharedState) -> Router {
             put(api::update_rewrite).delete(api::delete_rewrite),
         );
 
+    // Optional CIDR allow-list for the whole management server.
+    let allow: Arc<Vec<IpNet>> = Arc::new(
+        state
+            .config
+            .web
+            .allow_networks
+            .iter()
+            .filter_map(|s| s.parse().ok())
+            .collect(),
+    );
+
     let app = Router::new().merge(api);
     // DoH (RFC 8484) is also served on the management port when over HTTPS.
     let app = doh::route(app);
 
-    app.fallback(static_handler)
+    let app = app
+        .fallback(static_handler)
         .with_state(state)
         .layer(RequestBodyLimitLayer::new(512 * 1024))
         .layer(security_header("content-security-policy", CSP))
@@ -95,7 +110,28 @@ pub fn router(state: SharedState) -> Router {
             "referrer-policy",
             "strict-origin-when-cross-origin",
         ))
-        .layer(TraceLayer::new_for_http())
+        .layer(TraceLayer::new_for_http());
+
+    if allow.is_empty() {
+        app
+    } else {
+        app.layer(from_fn_with_state(allow, ip_guard))
+    }
+}
+
+/// Reject clients outside the configured management allow-list.
+async fn ip_guard(
+    State(allow): State<Arc<Vec<IpNet>>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    req: ExtractRequest,
+    next: Next,
+) -> Response {
+    if allow.iter().any(|n| n.contains(&peer.ip())) {
+        next.run(req).await
+    } else {
+        tracing::warn!(client = %peer.ip(), "rejected management request (not in allow-list)");
+        (StatusCode::FORBIDDEN, "forbidden").into_response()
+    }
 }
 
 fn security_header(name: &'static str, value: &'static str) -> SetResponseHeaderLayer<HeaderValue> {
