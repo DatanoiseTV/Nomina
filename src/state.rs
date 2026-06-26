@@ -8,7 +8,9 @@ use parking_lot::{Mutex, RwLock};
 
 use crate::config::Config;
 use crate::db::Db;
-use crate::dns::forwarder::Forwarder;
+use crate::dns::upstream::Upstream;
+use crate::filter::FilterSet;
+use crate::models::{BlockMode, ResolutionMode, Settings};
 use crate::stats::Stats;
 use crate::store::ZoneStore;
 
@@ -26,7 +28,9 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub stats: Arc<Stats>,
     store: RwLock<Arc<ZoneStore>>,
-    forwarder: RwLock<Option<Arc<Forwarder>>>,
+    upstream: RwLock<Option<Arc<Upstream>>>,
+    filter: RwLock<Arc<FilterSet>>,
+    settings: RwLock<Settings>,
     throttle: Mutex<LoginThrottle>,
 }
 
@@ -35,14 +39,18 @@ impl AppState {
         db: Db,
         config: Arc<Config>,
         store: ZoneStore,
-        forwarder: Option<Forwarder>,
+        upstream: Option<Upstream>,
+        filter: FilterSet,
+        settings: Settings,
     ) -> Self {
         Self {
             db,
             config,
             stats: Arc::new(Stats::new()),
             store: RwLock::new(Arc::new(store)),
-            forwarder: RwLock::new(forwarder.map(Arc::new)),
+            upstream: RwLock::new(upstream.map(Arc::new)),
+            filter: RwLock::new(Arc::new(filter)),
+            settings: RwLock::new(settings),
             throttle: Mutex::new(LoginThrottle::default()),
         }
     }
@@ -52,31 +60,52 @@ impl AppState {
         self.store.read().clone()
     }
 
-    /// Snapshot the current forwarder, if forwarding is configured/enabled.
-    pub fn forwarder(&self) -> Option<Arc<Forwarder>> {
-        self.forwarder.read().clone()
+    /// Snapshot the current upstream resolver, if resolution is enabled.
+    pub fn upstream(&self) -> Option<Arc<Upstream>> {
+        self.upstream.read().clone()
     }
 
-    /// Rebuild the in-memory authoritative store from the database and swap it
-    /// in atomically. Called after any zone/record/view change.
+    /// Snapshot the current filter set.
+    pub fn filter(&self) -> Arc<FilterSet> {
+        self.filter.read().clone()
+    }
+
+    pub fn block_mode(&self) -> BlockMode {
+        self.settings.read().block_mode
+    }
+
+    pub fn resolution_mode(&self) -> ResolutionMode {
+        self.settings.read().resolution_mode
+    }
+
+    /// Rebuild the in-memory authoritative store from the database.
     pub fn reload_store(&self) -> anyhow::Result<()> {
         let store = ZoneStore::load(&self.db)?;
         *self.store.write() = Arc::new(store);
         Ok(())
     }
 
-    /// Rebuild the forwarder from the given settings and swap it in.
-    pub fn rebuild_forwarder(&self, settings: &crate::models::Settings) {
-        if !settings.forward_enabled {
-            *self.forwarder.write() = None;
-            return;
-        }
-        match Forwarder::build(settings) {
-            Ok(f) => *self.forwarder.write() = Some(Arc::new(f)),
+    /// Rebuild the in-memory filter (blocklists/rules/rewrites) from the database.
+    pub fn reload_filter(&self) -> anyhow::Result<()> {
+        let blocking = self.settings.read().blocking_enabled;
+        let filter = FilterSet::load(&self.db, blocking)?;
+        *self.filter.write() = Arc::new(filter);
+        Ok(())
+    }
+
+    /// Apply a new settings snapshot: store it, rebuild the upstream, and reload
+    /// the filter (blocking toggle lives in settings).
+    pub fn apply_settings(&self, settings: Settings) {
+        *self.settings.write() = settings.clone();
+        match Upstream::build(&settings) {
+            Ok(up) => *self.upstream.write() = up.map(Arc::new),
             Err(e) => {
-                tracing::error!("failed to rebuild forwarder: {e}");
-                *self.forwarder.write() = None;
+                tracing::error!("failed to build upstream: {e}");
+                *self.upstream.write() = None;
             }
+        }
+        if let Err(e) = self.reload_filter() {
+            tracing::error!("failed to reload filter: {e}");
         }
     }
 

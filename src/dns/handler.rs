@@ -1,16 +1,15 @@
-//! The DNS [`RequestHandler`]: split-horizon authoritative lookup with upstream
-//! forwarding for everything else.
+//! The hickory [`RequestHandler`] for plain DNS, TCP, and DoT. It delegates all
+//! resolution logic to the shared [`crate::dns::resolve`] core.
 
 use async_trait::async_trait;
 use hickory_proto::op::{Header, HeaderCounts, MessageType, Metadata, OpCode, ResponseCode};
-use hickory_proto::rr::{Name, Record, RecordType};
+use hickory_proto::rr::{Name, Record};
 use hickory_server::net::runtime::Time;
 use hickory_server::server::{Request, RequestHandler, ResponseHandler, ResponseInfo};
 use hickory_server::zone_handler::MessageResponseBuilder;
 
+use crate::dns::resolve::resolve_query;
 use crate::state::SharedState;
-use crate::stats::QueryOutcome;
-use crate::store::Outcome;
 
 pub struct DnsHandler {
     pub state: SharedState,
@@ -20,15 +19,6 @@ impl DnsHandler {
     pub fn new(state: SharedState) -> Self {
         Self { state }
     }
-}
-
-struct Resolved {
-    answers: Vec<Record>,
-    authority: Vec<Record>,
-    rcode: ResponseCode,
-    authoritative: bool,
-    stat: QueryOutcome,
-    view: Option<String>,
 }
 
 #[async_trait]
@@ -52,42 +42,28 @@ impl RequestHandler for DnsHandler {
         let op_code = info.metadata.op_code;
         let req_id = info.metadata.id;
 
-        // We only answer standard queries.
         if op_code != OpCode::Query {
-            return self
-                .send_error(request, info.metadata, response_handle, ResponseCode::NotImp)
-                .await;
+            let builder = MessageResponseBuilder::from_message_request(request);
+            let response = builder.error_msg(info.metadata, ResponseCode::NotImp);
+            return match response_handle.send_response(response).await {
+                Ok(i) => i,
+                Err(_) => fallback_info(req_id, ResponseCode::NotImp),
+            };
         }
 
-        let recursion_available = self
-            .state
-            .forwarder()
-            .map(|f| f.enabled)
-            .unwrap_or(false);
-
-        let resolved = self.resolve(&qname, qtype, client).await;
-
-        // Record statistics (best-effort, never blocks the response).
-        self.state.stats.record(
-            client.to_string(),
-            resolved.view.clone(),
-            qname.to_string().trim_end_matches('.').to_string(),
-            qtype.to_string(),
-            resolved.stat,
-            format!("{:?}", resolved.rcode).to_uppercase(),
-        );
+        let out = resolve_query(&self.state, &qname, qtype, client).await;
 
         let mut meta = Metadata::response_from_request(info.metadata);
-        meta.authoritative = resolved.authoritative;
-        meta.recursion_available = recursion_available;
-        meta.response_code = resolved.rcode;
+        meta.authoritative = out.authoritative;
+        meta.recursion_available = out.recursion_available;
+        meta.response_code = out.rcode;
 
         let builder = MessageResponseBuilder::from_message_request(request);
         let response = builder.build(
             meta,
-            resolved.answers.iter(),
+            out.answers.iter(),
             std::iter::empty::<&Record>(),
-            resolved.authority.iter(),
+            out.authority.iter(),
             std::iter::empty::<&Record>(),
         );
 
@@ -97,77 +73,6 @@ impl RequestHandler for DnsHandler {
                 tracing::warn!(%qname, "failed to send response: {e}");
                 fallback_info(req_id, ResponseCode::ServFail)
             }
-        }
-    }
-}
-
-impl DnsHandler {
-    /// Resolve a query: authoritative first, then forward.
-    async fn resolve(&self, qname: &Name, qtype: RecordType, client: std::net::IpAddr) -> Resolved {
-        let store = self.state.store();
-        let result = store.lookup(qname, qtype, client);
-
-        match result.outcome {
-            Outcome::Authoritative | Outcome::NoData => Resolved {
-                answers: result.answers,
-                authority: result.authority,
-                rcode: result.rcode,
-                authoritative: true,
-                stat: QueryOutcome::Authoritative,
-                view: result.view_name,
-            },
-            Outcome::NxDomain => Resolved {
-                answers: result.answers,
-                authority: result.authority,
-                rcode: ResponseCode::NXDomain,
-                authoritative: true,
-                stat: QueryOutcome::NxDomain,
-                view: result.view_name,
-            },
-            Outcome::NotAuthoritative => {
-                // Forward to upstream if enabled.
-                match self.state.forwarder() {
-                    Some(fw) if fw.enabled => {
-                        let fr = fw.resolve(qname, qtype).await;
-                        let stat = match fr.rcode {
-                            ResponseCode::NXDomain => QueryOutcome::NxDomain,
-                            ResponseCode::ServFail => QueryOutcome::ServFail,
-                            _ => QueryOutcome::Forwarded,
-                        };
-                        Resolved {
-                            answers: fr.answers,
-                            authority: fr.authority,
-                            rcode: fr.rcode,
-                            authoritative: false,
-                            stat,
-                            view: result.view_name,
-                        }
-                    }
-                    _ => Resolved {
-                        answers: vec![],
-                        authority: vec![],
-                        rcode: ResponseCode::Refused,
-                        authoritative: false,
-                        stat: QueryOutcome::Refused,
-                        view: result.view_name,
-                    },
-                }
-            }
-        }
-    }
-
-    async fn send_error<R: ResponseHandler>(
-        &self,
-        request: &Request,
-        request_meta: &Metadata,
-        mut response_handle: R,
-        code: ResponseCode,
-    ) -> ResponseInfo {
-        let builder = MessageResponseBuilder::from_message_request(request);
-        let response = builder.error_msg(request_meta, code);
-        match response_handle.send_response(response).await {
-            Ok(info) => info,
-            Err(_) => fallback_info(request_meta.id, code),
         }
     }
 }

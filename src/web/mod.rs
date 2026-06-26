@@ -3,6 +3,7 @@
 
 pub mod api;
 pub mod auth;
+pub mod fetch;
 
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -22,7 +23,9 @@ use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
+use crate::dns::doh;
 use crate::state::SharedState;
+use std::net::SocketAddr;
 
 #[derive(Embed)]
 #[folder = "web/"]
@@ -59,11 +62,30 @@ pub fn router(state: SharedState) -> Router {
             "/api/records/{id}",
             put(api::update_record).delete(api::delete_record),
         )
-        .route("/api/settings", get(api::get_settings).put(api::put_settings));
+        .route("/api/settings", get(api::get_settings).put(api::put_settings))
+        .route(
+            "/api/blocklists",
+            get(api::list_blocklists).post(api::create_blocklist),
+        )
+        .route("/api/blocklists/refresh_all", post(api::refresh_all_blocklists))
+        .route(
+            "/api/blocklists/{id}",
+            put(api::update_blocklist).delete(api::delete_blocklist),
+        )
+        .route("/api/blocklists/{id}/refresh", post(api::refresh_blocklist))
+        .route("/api/rules", get(api::list_block_rules).post(api::create_block_rule))
+        .route("/api/rules/{id}", axum::routing::delete(api::delete_block_rule))
+        .route("/api/rewrites", get(api::list_rewrites).post(api::create_rewrite))
+        .route(
+            "/api/rewrites/{id}",
+            put(api::update_rewrite).delete(api::delete_rewrite),
+        );
 
-    Router::new()
-        .merge(api)
-        .fallback(static_handler)
+    let app = Router::new().merge(api);
+    // DoH (RFC 8484) is also served on the management port when over HTTPS.
+    let app = doh::route(app);
+
+    app.fallback(static_handler)
         .with_state(state)
         .layer(RequestBodyLimitLayer::new(512 * 1024))
         .layer(security_header("content-security-policy", CSP))
@@ -118,9 +140,14 @@ fn serve_embedded(content: rust_embed::EmbeddedFile) -> Response {
         .into_response()
 }
 
-/// Run the web server (plain HTTP).
+/// Run the web server (plain HTTP). Client connect-info is exposed so DoH
+/// split-horizon sees the real peer IP.
 pub async fn serve_plain(listener: TcpListener, app: Router) -> anyhow::Result<()> {
-    axum::serve(listener, app.into_make_service()).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 
@@ -133,7 +160,7 @@ pub async fn serve_tls(
     let acceptor = tokio_rustls::TlsAcceptor::from(tls_config);
 
     loop {
-        let (stream, _peer) = match listener.accept().await {
+        let (stream, peer) = match listener.accept().await {
             Ok(v) => v,
             Err(e) => {
                 tracing::warn!("web accept error: {e}");
@@ -154,8 +181,11 @@ pub async fn serve_tls(
             let service = hyper::service::service_fn(move |req: Request<Incoming>| {
                 let mut app = app.clone();
                 async move {
-                    let res: Result<Response, Infallible> =
-                        app.call(req.map(Body::new)).await;
+                    // Inject the peer address so ConnectInfo<SocketAddr> works.
+                    let mut req = req.map(Body::new);
+                    req.extensions_mut()
+                        .insert(axum::extract::ConnectInfo(peer));
+                    let res: Result<Response, Infallible> = app.call(req).await;
                     res
                 }
             });

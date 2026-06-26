@@ -73,6 +73,41 @@ CREATE TABLE IF NOT EXISTS settings (
     id    INTEGER PRIMARY KEY CHECK (id = 1),
     json  TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS blocklists (
+    id           INTEGER PRIMARY KEY,
+    name         TEXT NOT NULL,
+    url          TEXT NOT NULL UNIQUE,
+    format       TEXT NOT NULL DEFAULT 'hosts',
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    last_updated TEXT,
+    last_error   TEXT,
+    created_at   TEXT NOT NULL
+);
+
+-- Local cache of downloaded blocklist domains so we don't re-fetch on restart.
+CREATE TABLE IF NOT EXISTS blocklist_entries (
+    blocklist_id INTEGER NOT NULL REFERENCES blocklists(id) ON DELETE CASCADE,
+    domain       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ble_list ON blocklist_entries(blocklist_id);
+
+CREATE TABLE IF NOT EXISTS block_rules (
+    id         INTEGER PRIMARY KEY,
+    domain     TEXT NOT NULL,
+    action     TEXT NOT NULL,
+    comment    TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS rewrites (
+    id         INTEGER PRIMARY KEY,
+    domain     TEXT NOT NULL,
+    target     TEXT NOT NULL,
+    enabled    INTEGER NOT NULL DEFAULT 1,
+    comment    TEXT,
+    created_at TEXT NOT NULL
+);
 "#;
 
 #[derive(Clone)]
@@ -149,6 +184,21 @@ impl Db {
         tokio::task::spawn_blocking(move || {
             let guard = conn.lock();
             f(&guard)
+        })
+        .await?
+        .map_err(Into::into)
+    }
+
+    /// Like [`Db::run`] but provides a mutable connection (for transactions).
+    pub async fn run_mut<T, F>(&self, f: F) -> Result<T, AppError>
+    where
+        F: FnOnce(&mut Connection) -> rusqlite::Result<T> + Send + 'static,
+        T: Send + 'static,
+    {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut guard = conn.lock();
+            f(&mut guard)
         })
         .await?
         .map_err(Into::into)
@@ -592,4 +642,251 @@ impl Db {
         )?;
         Ok(())
     }
+
+    // ----- blocklists ------------------------------------------------------
+
+    pub fn list_blocklists(conn: &Connection) -> rusqlite::Result<Vec<Blocklist>> {
+        let mut stmt = conn.prepare(
+            "SELECT b.id, b.name, b.url, b.format, b.enabled, b.last_updated, b.last_error,
+                    b.created_at,
+                    (SELECT COUNT(*) FROM blocklist_entries e WHERE e.blocklist_id = b.id) AS cnt
+             FROM blocklists b ORDER BY b.name ASC",
+        )?;
+        let rows = stmt
+            .query_map([], Self::map_blocklist)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn blocklist(conn: &Connection, id: i64) -> rusqlite::Result<Option<Blocklist>> {
+        conn.query_row(
+            "SELECT b.id, b.name, b.url, b.format, b.enabled, b.last_updated, b.last_error,
+                    b.created_at,
+                    (SELECT COUNT(*) FROM blocklist_entries e WHERE e.blocklist_id = b.id) AS cnt
+             FROM blocklists b WHERE b.id = ?1",
+            params![id],
+            Self::map_blocklist,
+        )
+        .optional()
+    }
+
+    pub fn create_blocklist(
+        conn: &Connection,
+        name: &str,
+        url: &str,
+        format: BlocklistFormat,
+        enabled: bool,
+    ) -> rusqlite::Result<i64> {
+        conn.execute(
+            "INSERT INTO blocklists (name, url, format, enabled, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![name, url, enum_to_str(&format), enabled as i64, now()],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn update_blocklist(
+        conn: &Connection,
+        id: i64,
+        name: Option<&str>,
+        enabled: Option<bool>,
+    ) -> rusqlite::Result<()> {
+        if let Some(n) = name {
+            conn.execute("UPDATE blocklists SET name = ?1 WHERE id = ?2", params![n, id])?;
+        }
+        if let Some(e) = enabled {
+            conn.execute(
+                "UPDATE blocklists SET enabled = ?1 WHERE id = ?2",
+                params![e as i64, id],
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn delete_blocklist(conn: &Connection, id: i64) -> rusqlite::Result<()> {
+        conn.execute("DELETE FROM blocklists WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    /// Replace the cached entries of a blocklist with a freshly fetched set.
+    pub fn replace_blocklist_entries(
+        conn: &mut Connection,
+        id: i64,
+        domains: &[String],
+        error: Option<&str>,
+    ) -> rusqlite::Result<()> {
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM blocklist_entries WHERE blocklist_id = ?1", params![id])?;
+        {
+            let mut stmt =
+                tx.prepare("INSERT INTO blocklist_entries (blocklist_id, domain) VALUES (?1, ?2)")?;
+            for d in domains {
+                stmt.execute(params![id, d])?;
+            }
+        }
+        tx.execute(
+            "UPDATE blocklists SET last_updated = ?1, last_error = ?2 WHERE id = ?3",
+            params![now(), error, id],
+        )?;
+        tx.commit()
+    }
+
+    pub fn set_blocklist_error(conn: &Connection, id: i64, error: &str) -> rusqlite::Result<()> {
+        conn.execute(
+            "UPDATE blocklists SET last_error = ?1 WHERE id = ?2",
+            params![error, id],
+        )?;
+        Ok(())
+    }
+
+    /// All domains from enabled blocklists, for building the in-memory filter.
+    pub fn enabled_block_domains(conn: &Connection) -> rusqlite::Result<Vec<String>> {
+        let mut stmt = conn.prepare(
+            "SELECT e.domain FROM blocklist_entries e
+             JOIN blocklists b ON b.id = e.blocklist_id
+             WHERE b.enabled = 1",
+        )?;
+        let rows = stmt
+            .query_map([], |r| r.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    fn map_blocklist(r: &rusqlite::Row) -> rusqlite::Result<Blocklist> {
+        let fmt: String = r.get(3)?;
+        Ok(Blocklist {
+            id: r.get(0)?,
+            name: r.get(1)?,
+            url: r.get(2)?,
+            format: enum_from_str(&fmt).unwrap_or_default(),
+            enabled: r.get::<_, i64>(4)? != 0,
+            last_updated: r.get(5)?,
+            last_error: r.get(6)?,
+            created_at: r.get(7)?,
+            entry_count: r.get(8)?,
+        })
+    }
+
+    // ----- block rules -----------------------------------------------------
+
+    pub fn list_block_rules(conn: &Connection) -> rusqlite::Result<Vec<BlockRule>> {
+        let mut stmt = conn.prepare(
+            "SELECT id, domain, action, comment, created_at FROM block_rules ORDER BY domain ASC",
+        )?;
+        let rows = stmt
+            .query_map([], Self::map_block_rule)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn create_block_rule(
+        conn: &Connection,
+        domain: &str,
+        action: RuleAction,
+        comment: Option<&str>,
+    ) -> rusqlite::Result<i64> {
+        conn.execute(
+            "INSERT INTO block_rules (domain, action, comment, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![domain, enum_to_str(&action), comment, now()],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn delete_block_rule(conn: &Connection, id: i64) -> rusqlite::Result<()> {
+        conn.execute("DELETE FROM block_rules WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    fn map_block_rule(r: &rusqlite::Row) -> rusqlite::Result<BlockRule> {
+        let action: String = r.get(2)?;
+        Ok(BlockRule {
+            id: r.get(0)?,
+            domain: r.get(1)?,
+            action: enum_from_str(&action).unwrap_or(RuleAction::Deny),
+            comment: r.get(3)?,
+            created_at: r.get(4)?,
+        })
+    }
+
+    // ----- rewrites --------------------------------------------------------
+
+    pub fn list_rewrites(conn: &Connection) -> rusqlite::Result<Vec<Rewrite>> {
+        let mut stmt = conn.prepare(
+            "SELECT id, domain, target, enabled, comment, created_at FROM rewrites ORDER BY domain ASC",
+        )?;
+        let rows = stmt
+            .query_map([], Self::map_rewrite)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn rewrite(conn: &Connection, id: i64) -> rusqlite::Result<Option<Rewrite>> {
+        conn.query_row(
+            "SELECT id, domain, target, enabled, comment, created_at FROM rewrites WHERE id = ?1",
+            params![id],
+            Self::map_rewrite,
+        )
+        .optional()
+    }
+
+    pub fn create_rewrite(
+        conn: &Connection,
+        domain: &str,
+        target: &str,
+        comment: Option<&str>,
+    ) -> rusqlite::Result<i64> {
+        conn.execute(
+            "INSERT INTO rewrites (domain, target, enabled, comment, created_at)
+             VALUES (?1, ?2, 1, ?3, ?4)",
+            params![domain, target, comment, now()],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn update_rewrite(
+        conn: &Connection,
+        id: i64,
+        domain: Option<&str>,
+        target: Option<&str>,
+        enabled: Option<bool>,
+    ) -> rusqlite::Result<()> {
+        if let Some(d) = domain {
+            conn.execute("UPDATE rewrites SET domain = ?1 WHERE id = ?2", params![d, id])?;
+        }
+        if let Some(t) = target {
+            conn.execute("UPDATE rewrites SET target = ?1 WHERE id = ?2", params![t, id])?;
+        }
+        if let Some(e) = enabled {
+            conn.execute("UPDATE rewrites SET enabled = ?1 WHERE id = ?2", params![e as i64, id])?;
+        }
+        Ok(())
+    }
+
+    pub fn delete_rewrite(conn: &Connection, id: i64) -> rusqlite::Result<()> {
+        conn.execute("DELETE FROM rewrites WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    fn map_rewrite(r: &rusqlite::Row) -> rusqlite::Result<Rewrite> {
+        Ok(Rewrite {
+            id: r.get(0)?,
+            domain: r.get(1)?,
+            target: r.get(2)?,
+            enabled: r.get::<_, i64>(3)? != 0,
+            comment: r.get(4)?,
+            created_at: r.get(5)?,
+        })
+    }
+}
+
+/// Serialize a unit enum (with serde `rename_all`) to its string form.
+fn enum_to_str<T: serde::Serialize>(v: &T) -> String {
+    serde_json::to_value(v)
+        .ok()
+        .and_then(|x| x.as_str().map(String::from))
+        .unwrap_or_default()
+}
+
+fn enum_from_str<T: serde::de::DeserializeOwned>(s: &str) -> Option<T> {
+    serde_json::from_value(serde_json::Value::String(s.to_string())).ok()
 }

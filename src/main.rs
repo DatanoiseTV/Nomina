@@ -4,6 +4,7 @@ mod config;
 mod db;
 mod dns;
 mod error;
+mod filter;
 mod models;
 mod state;
 mod stats;
@@ -20,8 +21,9 @@ use tokio::net::TcpListener;
 
 use crate::config::Config;
 use crate::db::Db;
-use crate::dns::forwarder::Forwarder;
 use crate::dns::handler::DnsHandler;
+use crate::dns::upstream::Upstream;
+use crate::filter::FilterSet;
 use crate::state::{AppState, SharedState};
 use crate::store::ZoneStore;
 
@@ -118,21 +120,25 @@ async fn main() -> anyhow::Result<()> {
         Ok(s)
     })?;
 
-    // In-memory authoritative store + forwarder.
+    // In-memory authoritative store, upstream resolver, and filter set.
     let store = ZoneStore::load(&db)?;
-    let forwarder = if settings.forward_enabled {
-        match Forwarder::build(&settings) {
-            Ok(f) => Some(f),
-            Err(e) => {
-                tracing::warn!("forwarding disabled: {e}");
-                None
-            }
+    let upstream = match Upstream::build(&settings) {
+        Ok(up) => up,
+        Err(e) => {
+            tracing::warn!("upstream resolution disabled: {e}");
+            None
         }
-    } else {
-        None
     };
+    let filter = FilterSet::load(&db, settings.blocking_enabled)?;
 
-    let state: SharedState = Arc::new(AppState::new(db, config.clone(), store, forwarder));
+    let state: SharedState = Arc::new(AppState::new(
+        db,
+        config.clone(),
+        store,
+        upstream,
+        filter,
+        settings.clone(),
+    ));
 
     // Periodically purge expired sessions.
     {
@@ -162,6 +168,7 @@ async fn main() -> anyhow::Result<()> {
         let doh = if config.dns.doh_listen.is_empty() {
             None
         } else {
+            // Our DoH endpoint serves both HTTP/2 and HTTP/1.1.
             Some(tls::server_config(&material, &[b"h2", b"http/1.1"])?)
         };
         (web, dot, doh)
@@ -169,14 +176,30 @@ async fn main() -> anyhow::Result<()> {
         (None, None, None)
     };
 
-    // DNS server task.
+    // DNS server task (UDP/TCP + DoT).
     let dns_handler = DnsHandler::new(state.clone());
     let dns_config = config.clone();
     let dns_task = tokio::spawn(async move {
-        if let Err(e) = dns::server::run(dns_config, dns_handler, dot_tls, doh_tls).await {
+        if let Err(e) = dns::server::run(dns_config, dns_handler, dot_tls).await {
             tracing::error!("DNS server stopped: {e}");
         }
     });
+
+    // DoH listeners (our own RFC 8484 endpoint, GET + POST).
+    if let Some(doh_cfg) = doh_tls {
+        for addr in &config.dns.doh_listen {
+            let listener = TcpListener::bind(addr).await?;
+            let router = dns::doh::router(state.clone());
+            let cfg = doh_cfg.clone();
+            let addr = *addr;
+            tracing::info!("DNS-over-HTTPS listening on {addr}/dns-query");
+            tokio::spawn(async move {
+                if let Err(e) = web::serve_tls(listener, router, cfg).await {
+                    tracing::error!("DoH server stopped on {addr}: {e}");
+                }
+            });
+        }
+    }
 
     // Web server task.
     let web_task = if config.web.disabled {

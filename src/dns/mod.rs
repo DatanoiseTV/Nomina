@@ -1,5 +1,8 @@
-//! DNS serving: the request handler, upstream forwarder, and socket bootstrap.
+//! DNS serving: the request handler, upstream resolution, the shared resolve
+//! core, the DoH endpoint, and socket bootstrap.
 
-pub mod forwarder;
+pub mod doh;
 pub mod handler;
+pub mod resolve;
 pub mod server;
+pub mod upstream;

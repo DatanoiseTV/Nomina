@@ -19,6 +19,8 @@ pub enum QueryOutcome {
     NxDomain,
     Refused,
     ServFail,
+    Blocked,
+    Rewritten,
 }
 
 impl QueryOutcome {
@@ -29,6 +31,8 @@ impl QueryOutcome {
             QueryOutcome::NxDomain => "nxdomain",
             QueryOutcome::Refused => "refused",
             QueryOutcome::ServFail => "servfail",
+            QueryOutcome::Blocked => "blocked",
+            QueryOutcome::Rewritten => "rewritten",
         }
     }
 }
@@ -52,6 +56,7 @@ struct Counters {
     nxdomain: AtomicU64,
     refused: AtomicU64,
     servfail: AtomicU64,
+    blocked: AtomicU64,
 }
 
 pub struct Stats {
@@ -93,7 +98,7 @@ impl Stats {
     ) {
         self.counters.total.fetch_add(1, Ordering::Relaxed);
         match outcome {
-            QueryOutcome::Authoritative => {
+            QueryOutcome::Authoritative | QueryOutcome::Rewritten => {
                 self.counters.authoritative.fetch_add(1, Ordering::Relaxed);
             }
             QueryOutcome::Forwarded => {
@@ -107,6 +112,9 @@ impl Stats {
             }
             QueryOutcome::ServFail => {
                 self.counters.servfail.fetch_add(1, Ordering::Relaxed);
+            }
+            QueryOutcome::Blocked => {
+                self.counters.blocked.fetch_add(1, Ordering::Relaxed);
             }
         }
 
@@ -144,6 +152,7 @@ impl Stats {
             "nxdomain": self.counters.nxdomain.load(Ordering::Relaxed),
             "refused": self.counters.refused.load(Ordering::Relaxed),
             "servfail": self.counters.servfail.load(Ordering::Relaxed),
+            "blocked": self.counters.blocked.load(Ordering::Relaxed),
             "by_qtype": by_qtype,
             "recent": recent,
         })

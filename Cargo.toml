@@ -17,7 +17,7 @@ base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
 futures-util = "0.3"
 hickory-proto = "0.26"
-hickory-resolver = { version = "0.26", features = ["tokio", "system-config", "tls-ring", "https-ring"] }
+hickory-resolver = { version = "0.26", features = ["tokio", "system-config", "tls-ring", "https-ring", "recursor"] }
 hickory-server = { version = "0.26", features = ["tls-ring", "https-ring"] }
 hyper = { version = "1", features = ["server", "http1", "http2"] }
 hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto"] }
@@ -25,6 +25,7 @@ ipnet = { version = "2", features = ["serde"] }
 parking_lot = "0.12"
 rand = "0.8"
 rcgen = "0.13"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "http2"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 rust-embed = { version = "8", features = ["mime-guess"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }

@@ -114,15 +114,64 @@ pub struct Forwarder {
     pub tls_name: Option<String>,
 }
 
+/// How PicoNS resolves names it is not authoritative for.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ResolutionMode {
+    /// Forward to the configured upstream resolvers.
+    Forward,
+    /// Resolve recursively starting from the root servers (no upstream).
+    Recursive,
+    /// Authoritative-only: refuse anything outside local zones.
+    Off,
+}
+
+impl Default for ResolutionMode {
+    fn default() -> Self {
+        ResolutionMode::Forward
+    }
+}
+
+/// What to return for a blocked name.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BlockMode {
+    /// Answer NXDOMAIN.
+    NxDomain,
+    /// Answer 0.0.0.0 / :: (a sinkhole address).
+    ZeroIp,
+    /// Answer REFUSED.
+    Refused,
+}
+
+impl Default for BlockMode {
+    fn default() -> Self {
+        BlockMode::NxDomain
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
+    /// Upstream resolvers used when `resolution_mode` is `forward`.
     pub forwarders: Vec<Forwarder>,
-    pub forward_enabled: bool,
+    /// Resolution strategy for non-authoritative names.
+    #[serde(default)]
+    pub resolution_mode: ResolutionMode,
+    /// Response style for blocked names.
+    #[serde(default)]
+    pub block_mode: BlockMode,
+    /// Enable blocklist filtering of non-authoritative names.
+    #[serde(default = "default_true")]
+    pub blocking_enabled: bool,
     pub cache_size: u64,
     pub cache_min_ttl: u32,
     pub cache_max_ttl: u32,
     #[serde(default)]
     pub dnssec_validate_upstream: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -142,7 +191,9 @@ impl Default for Settings {
                     tls_name: None,
                 },
             ],
-            forward_enabled: true,
+            resolution_mode: ResolutionMode::Forward,
+            block_mode: BlockMode::NxDomain,
+            blocking_enabled: true,
             cache_size: 1024,
             cache_min_ttl: 0,
             cache_max_ttl: 86400,
@@ -150,6 +201,109 @@ impl Default for Settings {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Blocklists (Pi-hole style filtering)
+// ---------------------------------------------------------------------------
+
+/// Format of a remote blocklist source.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum BlocklistFormat {
+    /// `hosts` file: `0.0.0.0 domain` or `127.0.0.1 domain` lines.
+    Hosts,
+    /// Plain domain list, one domain per line.
+    Domains,
+}
+
+impl Default for BlocklistFormat {
+    fn default() -> Self {
+        BlocklistFormat::Hosts
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Blocklist {
+    pub id: i64,
+    pub name: String,
+    pub url: String,
+    pub format: BlocklistFormat,
+    pub enabled: bool,
+    pub entry_count: i64,
+    pub last_updated: Option<String>,
+    pub last_error: Option<String>,
+    pub created_at: String,
+}
+
+/// A manual allow/deny rule that overrides the downloaded lists.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RuleAction {
+    /// Block this domain (and its subdomains).
+    Deny,
+    /// Always allow this domain even if a blocklist contains it.
+    Allow,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BlockRule {
+    pub id: i64,
+    pub domain: String,
+    pub action: RuleAction,
+    pub comment: Option<String>,
+    pub created_at: String,
+}
+
+/// A DNS rewrite: answer a fixed IP (A/AAAA) or CNAME target for a domain
+/// (and its subdomains), regardless of upstream. Works even in
+/// authoritative-only mode.
+#[derive(Debug, Clone, Serialize)]
+pub struct Rewrite {
+    pub id: i64,
+    pub domain: String,
+    pub target: String,
+    pub enabled: bool,
+    pub comment: Option<String>,
+    pub created_at: String,
+}
+
+/// Does `pattern` (a domain, optionally `*.`-prefixed) cover `name`? Matches the
+/// domain itself and all subdomains. Both inputs must be lowercase, no trailing
+/// dot.
+pub fn domain_covers(pattern: &str, name: &str) -> bool {
+    let p = pattern.strip_prefix("*.").unwrap_or(pattern);
+    name == p || name.ends_with(&format!(".{p}"))
+}
+
+/// The IPv4 + IPv6 root server addresses, used for recursive resolution.
+pub const ROOT_SERVERS: &[&str] = &[
+    "198.41.0.4",
+    "170.247.170.2",
+    "192.33.4.12",
+    "199.7.91.13",
+    "192.203.230.10",
+    "192.5.5.241",
+    "192.112.36.4",
+    "198.97.190.53",
+    "192.36.148.17",
+    "192.58.128.30",
+    "193.0.14.129",
+    "199.7.83.42",
+    "202.12.27.33",
+    "2001:503:ba3e::2:30",
+    "2801:1b8:10::b",
+    "2001:500:2::c",
+    "2001:500:2d::d",
+    "2001:500:a8::e",
+    "2001:500:2f::f",
+    "2001:500:12::d0d",
+    "2001:500:1::53",
+    "2001:7fe::53",
+    "2001:503:c27::2:30",
+    "2001:7fd::1",
+    "2001:500:9f::42",
+    "2001:dc3::35",
+];
 
 // ---------------------------------------------------------------------------
 // DNS helpers

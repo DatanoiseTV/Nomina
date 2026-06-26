@@ -68,6 +68,7 @@ pub async fn health() -> Response {
 
 pub async fn status(State(state): State<SharedState>, _auth: Authed) -> ApiResult<Response> {
     let store = state.store();
+    let filter = state.filter();
     let zones = state.db.run(Db::list_zones).await?;
     let record_count: i64 = zones.iter().map(|z| z.record_count).sum();
     Ok(ok_json(json!({
@@ -79,6 +80,9 @@ pub async fn status(State(state): State<SharedState>, _auth: Authed) -> ApiResul
         "active_zone_count": store.zone_count(),
         "record_count": record_count,
         "view_count": store.view_count(),
+        "resolution_mode": state.resolution_mode(),
+        "blocked_domains": filter.blocked_count(),
+        "rewrite_count": filter.rewrite_count(),
     })))
 }
 
@@ -671,7 +675,9 @@ pub async fn delete_record(
 #[derive(Deserialize)]
 pub struct SettingsUpdate {
     forwarders: Option<Vec<Forwarder>>,
-    forward_enabled: Option<bool>,
+    resolution_mode: Option<ResolutionMode>,
+    block_mode: Option<BlockMode>,
+    blocking_enabled: Option<bool>,
     cache_size: Option<u64>,
     cache_min_ttl: Option<u32>,
     cache_max_ttl: Option<u32>,
@@ -705,8 +711,14 @@ pub async fn put_settings(
         }
         settings.forwarders = fwds;
     }
-    if let Some(v) = req.forward_enabled {
-        settings.forward_enabled = v;
+    if let Some(v) = req.resolution_mode {
+        settings.resolution_mode = v;
+    }
+    if let Some(v) = req.block_mode {
+        settings.block_mode = v;
+    }
+    if let Some(v) = req.blocking_enabled {
+        settings.blocking_enabled = v;
     }
     if let Some(v) = req.cache_size {
         settings.cache_size = v;
@@ -723,7 +735,287 @@ pub async fn put_settings(
 
     let to_store = settings.clone();
     state.db.run(move |c| Db::put_settings(c, &to_store)).await?;
-    // Rebuild the forwarder live.
-    state.rebuild_forwarder(&settings);
+    // Apply live: rebuild the upstream resolver and reload the filter.
+    state.apply_settings(settings.clone());
     Ok(ok_json(json!({ "settings": settings })))
+}
+
+// ---------------------------------------------------------------------------
+// Blocklists
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct BlocklistCreate {
+    name: String,
+    url: String,
+    #[serde(default)]
+    format: BlocklistFormat,
+    #[serde(default)]
+    refresh_now: bool,
+}
+
+#[derive(Deserialize)]
+pub struct BlocklistUpdate {
+    name: Option<String>,
+    enabled: Option<bool>,
+}
+
+pub async fn list_blocklists(State(state): State<SharedState>, _auth: Authed) -> ApiResult<Response> {
+    let lists = state.db.run(Db::list_blocklists).await?;
+    Ok(ok_json(json!({ "blocklists": lists })))
+}
+
+pub async fn create_blocklist(
+    State(state): State<SharedState>,
+    _auth: Authed,
+    Json(req): Json<BlocklistCreate>,
+) -> ApiResult<Response> {
+    if req.name.trim().is_empty() {
+        return Err(validation_field("name", "must not be empty"));
+    }
+    if !(req.url.starts_with("http://") || req.url.starts_with("https://")) {
+        return Err(validation_field("url", "must be an http(s) URL"));
+    }
+    let name = req.name.trim().to_string();
+    let url = req.url.trim().to_string();
+    let id = state
+        .db
+        .run(move |c| Db::create_blocklist(c, &name, &url, req.format, true))
+        .await?;
+
+    if req.refresh_now {
+        refresh_one(&state, id).await;
+    }
+    state.reload_filter()?;
+    let list = state.db.run(move |c| Db::blocklist(c, id)).await?;
+    Ok(created_json(json!({ "blocklist": list })))
+}
+
+pub async fn update_blocklist(
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+    _auth: Authed,
+    Json(req): Json<BlocklistUpdate>,
+) -> ApiResult<Response> {
+    let name = req.name.clone();
+    state
+        .db
+        .run(move |c| Db::update_blocklist(c, id, name.as_deref(), req.enabled))
+        .await?;
+    state.reload_filter()?;
+    let list = state.db.run(move |c| Db::blocklist(c, id)).await?;
+    Ok(ok_json(json!({ "blocklist": list })))
+}
+
+pub async fn delete_blocklist(
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+    _auth: Authed,
+) -> ApiResult<Response> {
+    state.db.run(move |c| Db::delete_blocklist(c, id)).await?;
+    state.reload_filter()?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+pub async fn refresh_blocklist(
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+    _auth: Authed,
+) -> ApiResult<Response> {
+    refresh_one(&state, id).await;
+    state.reload_filter()?;
+    let list = state
+        .db
+        .run(move |c| Db::blocklist(c, id))
+        .await?
+        .ok_or_else(|| AppError::not_found("blocklist not found"))?;
+    Ok(ok_json(json!({ "blocklist": list })))
+}
+
+pub async fn refresh_all_blocklists(
+    State(state): State<SharedState>,
+    _auth: Authed,
+) -> ApiResult<Response> {
+    let lists = state.db.run(Db::list_blocklists).await?;
+    for l in &lists {
+        if l.enabled {
+            refresh_one(&state, l.id).await;
+        }
+    }
+    state.reload_filter()?;
+    let lists = state.db.run(Db::list_blocklists).await?;
+    Ok(ok_json(json!({ "blocklists": lists })))
+}
+
+/// Fetch and parse one blocklist, replacing its cached entries.
+async fn refresh_one(state: &SharedState, id: i64) {
+    let list = match state.db.run(move |c| Db::blocklist(c, id)).await {
+        Ok(Some(l)) => l,
+        _ => return,
+    };
+
+    match crate::web::fetch::fetch_blocklist(&list.url, list.format).await {
+        Ok(domains) => {
+            if let Err(e) = state
+                .db
+                .run_mut(move |c| Db::replace_blocklist_entries(c, id, &domains, None))
+                .await
+            {
+                tracing::error!("storing blocklist {id}: {e}");
+            }
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            let _ = state
+                .db
+                .run(move |c| Db::set_blocklist_error(c, id, &msg))
+                .await;
+            tracing::warn!("fetching blocklist {id}: {e}");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Block rules (manual allow/deny)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct BlockRuleCreate {
+    domain: String,
+    action: RuleAction,
+    #[serde(default)]
+    comment: Option<String>,
+}
+
+pub async fn list_block_rules(State(state): State<SharedState>, _auth: Authed) -> ApiResult<Response> {
+    let rules = state.db.run(Db::list_block_rules).await?;
+    Ok(ok_json(json!({ "rules": rules })))
+}
+
+pub async fn create_block_rule(
+    State(state): State<SharedState>,
+    _auth: Authed,
+    Json(req): Json<BlockRuleCreate>,
+) -> ApiResult<Response> {
+    let domain = normalize_domain(&req.domain)?;
+    let comment = req.comment.clone();
+    let id = state
+        .db
+        .run(move |c| Db::create_block_rule(c, &domain, req.action, comment.as_deref()))
+        .await?;
+    state.reload_filter()?;
+    let rules = state.db.run(Db::list_block_rules).await?;
+    let rule = rules.into_iter().find(|r| r.id == id);
+    Ok(created_json(json!({ "rule": rule })))
+}
+
+pub async fn delete_block_rule(
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+    _auth: Authed,
+) -> ApiResult<Response> {
+    state.db.run(move |c| Db::delete_block_rule(c, id)).await?;
+    state.reload_filter()?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+// ---------------------------------------------------------------------------
+// Rewrites
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct RewriteCreate {
+    domain: String,
+    target: String,
+    #[serde(default)]
+    comment: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct RewriteUpdate {
+    domain: Option<String>,
+    target: Option<String>,
+    enabled: Option<bool>,
+}
+
+pub async fn list_rewrites(State(state): State<SharedState>, _auth: Authed) -> ApiResult<Response> {
+    let rewrites = state.db.run(Db::list_rewrites).await?;
+    Ok(ok_json(json!({ "rewrites": rewrites })))
+}
+
+pub async fn create_rewrite(
+    State(state): State<SharedState>,
+    _auth: Authed,
+    Json(req): Json<RewriteCreate>,
+) -> ApiResult<Response> {
+    let domain = normalize_domain(&req.domain)?;
+    validate_rewrite_target(&req.target)?;
+    let target = req.target.trim().to_string();
+    let comment = req.comment.clone();
+    let id = state
+        .db
+        .run(move |c| Db::create_rewrite(c, &domain, &target, comment.as_deref()))
+        .await?;
+    state.reload_filter()?;
+    let rewrite = state.db.run(move |c| Db::rewrite(c, id)).await?;
+    Ok(created_json(json!({ "rewrite": rewrite })))
+}
+
+pub async fn update_rewrite(
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+    _auth: Authed,
+    Json(req): Json<RewriteUpdate>,
+) -> ApiResult<Response> {
+    if let Some(t) = &req.target {
+        validate_rewrite_target(t)?;
+    }
+    let domain = match &req.domain {
+        Some(d) => Some(normalize_domain(d)?),
+        None => None,
+    };
+    let target = req.target.clone();
+    state
+        .db
+        .run(move |c| Db::update_rewrite(c, id, domain.as_deref(), target.as_deref(), req.enabled))
+        .await?;
+    state.reload_filter()?;
+    let rewrite = state.db.run(move |c| Db::rewrite(c, id)).await?;
+    Ok(ok_json(json!({ "rewrite": rewrite })))
+}
+
+pub async fn delete_rewrite(
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+    _auth: Authed,
+) -> ApiResult<Response> {
+    state.db.run(move |c| Db::delete_rewrite(c, id)).await?;
+    state.reload_filter()?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+fn normalize_domain(domain: &str) -> Result<String, AppError> {
+    let d = domain.trim().trim_end_matches('.').to_ascii_lowercase();
+    if d.is_empty() {
+        return Err(validation_field("domain", "must not be empty"));
+    }
+    // Allow a leading wildcard label.
+    let check = d.strip_prefix("*.").unwrap_or(&d);
+    if hickory_proto::rr::Name::from_utf8(format!("{check}.")).is_err() {
+        return Err(validation_field("domain", "invalid domain"));
+    }
+    Ok(d)
+}
+
+fn validate_rewrite_target(target: &str) -> Result<(), AppError> {
+    let t = target.trim();
+    if t.parse::<std::net::IpAddr>().is_ok() {
+        return Ok(());
+    }
+    let fqdn = if t.ends_with('.') { t.to_string() } else { format!("{t}.") };
+    if hickory_proto::rr::Name::from_utf8(&fqdn).is_ok() {
+        Ok(())
+    } else {
+        Err(validation_field("target", "must be an IP address or hostname"))
+    }
 }

@@ -19,13 +19,12 @@ pub struct ListenerInfo {
     pub enabled: bool,
 }
 
-/// Bind all configured DNS listeners and run until the process stops.
-/// `dot_config`/`doh_config` are the TLS configs for the encrypted transports.
+/// Bind the plain (UDP/TCP) and DoT listeners and run until the process stops.
+/// DoH is served separately by the axum-based [`crate::dns::doh`] endpoint.
 pub async fn run(
     config: Arc<Config>,
     handler: DnsHandler,
     dot_config: Option<Arc<ServerConfig>>,
-    doh_config: Option<Arc<ServerConfig>>,
 ) -> anyhow::Result<()> {
     let timeout = Duration::from_secs(config.dns.tcp_timeout_secs);
     let mut server = Server::new(handler);
@@ -52,27 +51,6 @@ pub async fn run(
                 .register_tls_listener_with_tls_config(tcp, timeout, tls.clone())
                 .with_context(|| format!("registering DoT {addr}"))?;
             tracing::info!("DNS-over-TLS listening on {addr}");
-        }
-    }
-
-    if let Some(tls) = &doh_config {
-        for addr in &config.dns.doh_listen {
-            let tcp = TcpListener::bind(addr)
-                .await
-                .with_context(|| format!("binding DoH {addr}"))?;
-            server
-                .register_https_listener_with_tls_config(
-                    tcp,
-                    timeout,
-                    tls.clone(),
-                    Some(config.tls.hostname.clone()),
-                    config.dns.doh_path.clone(),
-                )
-                .with_context(|| format!("registering DoH {addr}"))?;
-            tracing::info!(
-                "DNS-over-HTTPS listening on {addr}{}",
-                config.dns.doh_path
-            );
         }
     }
 
