@@ -200,10 +200,20 @@ function renderStats(host, stats) {
     ["Forwarded", stats.forwarded],
     ["Cached", stats.cached],
     ["Blocked", stats.blocked, "warn"],
+    ["Dangerous", stats.dangerous, "danger"],
     ["NXDOMAIN", stats.nxdomain],
     ["Refused", stats.refused],
     ["SERVFAIL", stats.servfail],
   ];
+
+  const lat = stats.latency || {};
+  const cache = stats.cache || {};
+  const fmtMs = (v) => (v == null ? "-" : `${v} ms`);
+  const latStat = (label, val) =>
+    h("div.stat.stat-sm", [h("div.label", label), h("div.value", fmtMs(val))]);
+  const cacheStat = (label, val) =>
+    h("div.stat.stat-sm", [h("div.label", label), h("div.value", val)]);
+  const hitPct = cache.hit_rate != null ? `${Math.round(cache.hit_rate * 100)}%` : "-";
 
   const qtypes = Object.entries(stats.by_qtype || {}).sort((a, b) => b[1] - a[1]);
   const max = qtypes.reduce((m, [, v]) => Math.max(m, v), 0) || 1;
@@ -234,6 +244,36 @@ function renderStats(host, stats) {
           h(`div.stat${kind ? ".stat-" + kind : ""}`, [h("div.label", label), h("div.value", fmtInt(val))])
         )
       ),
+
+      h("div.grid.grid-cards", { style: "margin-bottom:16px" }, [
+        h("div.card.section", [
+          h("div.card-head", [h("h2", "Resolution latency")]),
+          h("div.card-pad", [
+            h("div.grid.grid-cards", [
+              latStat("Minimum", lat.min_ms),
+              latStat("Average", lat.avg_ms),
+              latStat("Median", lat.median_ms),
+              latStat("Maximum", lat.max_ms),
+            ]),
+            h("div.inline-note", { style: "margin-top:6px" },
+              `End-to-end resolution time over the last ${fmtInt(lat.count || 0)} queries.`),
+          ]),
+        ]),
+        h("div.card.section", [
+          h("div.card-head", [h("h2", "Cache")]),
+          h("div.card-pad", [
+            h("div.grid.grid-cards", [
+              cacheStat("Hit rate", hitPct),
+              cacheStat("Hits", fmtInt(cache.hits || 0)),
+              cacheStat("Misses", fmtInt(cache.misses || 0)),
+              cacheStat("Entries", fmtInt(cache.size || 0)),
+            ]),
+            h("div.inline-note", { style: "margin-top:6px" },
+              "Edge cache in front of the upstream resolver."),
+          ]),
+        ]),
+      ]),
+
       h("div.card", [
         h("div.card-head", [h("h2", "By query type")]),
         h("div.card-pad",
