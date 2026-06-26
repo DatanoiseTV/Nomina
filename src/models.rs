@@ -507,4 +507,17 @@ mod tests {
         assert_eq!(canonical_zone_name("Home.Lan.").unwrap(), "home.lan");
         assert!(canonical_zone_name("").is_err());
     }
+
+    #[test]
+    fn domain_coverage() {
+        // A plain domain covers itself and all subdomains.
+        assert!(domain_covers("example.com", "example.com"));
+        assert!(domain_covers("example.com", "ads.example.com"));
+        assert!(domain_covers("example.com", "a.b.example.com"));
+        assert!(!domain_covers("example.com", "notexample.com"));
+        assert!(!domain_covers("example.com", "example.com.evil.com"));
+        // A wildcard prefix behaves the same for subdomain matching.
+        assert!(domain_covers("*.example.com", "x.example.com"));
+        assert!(domain_covers("*.example.com", "example.com"));
+    }
 }
