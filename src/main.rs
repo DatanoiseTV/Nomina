@@ -51,6 +51,10 @@ struct Cli {
     #[arg(long = "doh-listen")]
     doh_listen: Vec<SocketAddr>,
 
+    /// DNS-over-QUIC listen address (repeatable), e.g. 0.0.0.0:853.
+    #[arg(long = "doq-listen")]
+    doq_listen: Vec<SocketAddr>,
+
     /// Management UI/API listen address, e.g. 0.0.0.0:8053.
     #[arg(long = "web-listen")]
     web_listen: Option<SocketAddr>,
@@ -80,6 +84,9 @@ fn apply_overrides(mut config: Config, cli: &Cli) -> Config {
     }
     if !cli.doh_listen.is_empty() {
         config.dns.doh_listen = cli.doh_listen.clone();
+    }
+    if !cli.doq_listen.is_empty() {
+        config.dns.doq_listen = cli.doq_listen.clone();
     }
     if let Some(w) = cli.web_listen {
         config.web.listen = w;
@@ -155,8 +162,8 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // TLS material (shared by web/DoT/DoH) if any TLS listener is enabled.
-    let (web_tls, dot_tls, doh_tls) = if config.tls_required() {
+    // TLS material (shared by web/DoT/DoH/DoQ) if any TLS listener is enabled.
+    let (web_tls, dot_tls, doh_tls, doq_tls) = if config.tls_required() {
         let material = tls::load_or_generate(&config)?;
         let web = if config.web.tls {
             Some(tls::server_config(&material, &[b"h2", b"http/1.1"])?)
@@ -174,9 +181,15 @@ async fn main() -> anyhow::Result<()> {
             // Our DoH endpoint serves both HTTP/2 and HTTP/1.1.
             Some(tls::server_config(&material, &[b"h2", b"http/1.1"])?)
         };
-        (web, dot, doh)
+        let doq = if config.dns.doq_listen.is_empty() {
+            None
+        } else {
+            // DNS-over-QUIC (RFC 9250) uses ALPN "doq".
+            Some(tls::server_config(&material, &[b"doq"])?)
+        };
+        (web, dot, doh, doq)
     } else {
-        (None, None, None)
+        (None, None, None, None)
     };
 
     // ---- Bind all listeners while still privileged ----
@@ -209,7 +222,9 @@ async fn main() -> anyhow::Result<()> {
     let dns_handler = DnsHandler::new(state.clone());
     let dns_config = config.clone();
     let dns_task = tokio::spawn(async move {
-        if let Err(e) = dns::server::run(dns_config, dns_handler, dns_sockets, dot_tls).await {
+        if let Err(e) =
+            dns::server::run(dns_config, dns_handler, dns_sockets, dot_tls, doq_tls).await
+        {
             tracing::error!("DNS server stopped: {e}");
         }
     });

@@ -66,6 +66,20 @@ pub async fn health() -> Response {
     ok_json(json!({ "status": "ok", "version": VERSION }))
 }
 
+/// Prometheus metrics (aggregate, non-identifying). Unauthenticated like
+/// `/health`; protect via the management bind address / `allow_networks`.
+pub async fn metrics(State(state): State<SharedState>) -> Response {
+    (
+        StatusCode::OK,
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        state.stats.prometheus(),
+    )
+        .into_response()
+}
+
 pub async fn status(State(state): State<SharedState>, _auth: Authed) -> ApiResult<Response> {
     let store = state.store();
     let filter = state.filter();

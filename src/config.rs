@@ -44,6 +44,8 @@ pub struct DnsConfig {
     pub dot_listen: Vec<SocketAddr>,
     /// DNS-over-HTTPS listen addresses (requires TLS material).
     pub doh_listen: Vec<SocketAddr>,
+    /// DNS-over-QUIC listen addresses (UDP; requires TLS material).
+    pub doq_listen: Vec<SocketAddr>,
     /// HTTP path the DoH endpoint answers on.
     pub doh_path: String,
     /// Idle timeout for TCP/DoT connections, seconds.
@@ -101,6 +103,7 @@ impl Default for DnsConfig {
             listen: vec!["0.0.0.0:53".parse().unwrap()],
             dot_listen: vec![],
             doh_listen: vec![],
+            doq_listen: vec![],
             doh_path: "/dns-query".into(),
             tcp_timeout_secs: 10,
         }
@@ -153,6 +156,9 @@ impl Config {
 
     /// Whether any TLS-requiring listener is configured.
     pub fn tls_required(&self) -> bool {
-        self.web.tls || !self.dns.dot_listen.is_empty() || !self.dns.doh_listen.is_empty()
+        self.web.tls
+            || !self.dns.dot_listen.is_empty()
+            || !self.dns.doh_listen.is_empty()
+            || !self.dns.doq_listen.is_empty()
     }
 }

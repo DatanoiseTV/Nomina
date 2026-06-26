@@ -17,9 +17,10 @@ use crate::dns::handler::DnsHandler;
 pub struct DnsSockets {
     plain: Vec<(SocketAddr, UdpSocket, TcpListener)>,
     dot: Vec<(SocketAddr, TcpListener)>,
+    doq: Vec<(SocketAddr, UdpSocket)>,
 }
 
-/// Bind all plain (UDP/TCP) and DoT sockets. Call this before dropping privileges.
+/// Bind all plain (UDP/TCP), DoT, and DoQ sockets. Call before dropping privileges.
 pub async fn bind(config: &Config) -> anyhow::Result<DnsSockets> {
     let mut plain = Vec::new();
     for addr in &config.dns.listen {
@@ -38,7 +39,14 @@ pub async fn bind(config: &Config) -> anyhow::Result<DnsSockets> {
             .with_context(|| format!("binding DoT {addr}"))?;
         dot.push((*addr, tcp));
     }
-    Ok(DnsSockets { plain, dot })
+    let mut doq = Vec::new();
+    for addr in &config.dns.doq_listen {
+        let udp = UdpSocket::bind(addr)
+            .await
+            .with_context(|| format!("binding DoQ {addr}"))?;
+        doq.push((*addr, udp));
+    }
+    Ok(DnsSockets { plain, dot, doq })
 }
 
 /// Describes one active listener for the status API.
@@ -56,6 +64,7 @@ pub async fn run(
     handler: DnsHandler,
     sockets: DnsSockets,
     dot_config: Option<Arc<ServerConfig>>,
+    doq_config: Option<Arc<ServerConfig>>,
 ) -> anyhow::Result<()> {
     let timeout = Duration::from_secs(config.dns.tcp_timeout_secs);
     let mut server = Server::new(handler);
@@ -77,6 +86,21 @@ pub async fn run(
         }
         None if !sockets.dot.is_empty() => {
             tracing::warn!("DoT listeners configured but no TLS material; skipping");
+        }
+        None => {}
+    }
+
+    match &doq_config {
+        Some(tls) => {
+            for (addr, udp) in sockets.doq {
+                server
+                    .register_quic_listener_and_tls_config(udp, timeout, tls.clone())
+                    .with_context(|| format!("registering DoQ {addr}"))?;
+                tracing::info!("DNS-over-QUIC listening on {addr}");
+            }
+        }
+        None if !sockets.doq.is_empty() => {
+            tracing::warn!("DoQ listeners configured but no TLS material; skipping");
         }
         None => {}
     }
@@ -110,6 +134,13 @@ pub fn listener_infos(config: &Config) -> Vec<ListenerInfo> {
     for addr in &config.dns.doh_listen {
         out.push(ListenerInfo {
             kind: "doh".into(),
+            addr: addr.to_string(),
+            enabled: true,
+        });
+    }
+    for addr in &config.dns.doq_listen {
+        out.push(ListenerInfo {
+            kind: "doq".into(),
             addr: addr.to_string(),
             enabled: true,
         });

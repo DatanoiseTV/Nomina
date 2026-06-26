@@ -42,6 +42,7 @@ const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsa
 pub fn router(state: SharedState) -> Router {
     let api = Router::new()
         .route("/api/health", get(api::health))
+        .route("/metrics", get(api::metrics))
         .route("/api/status", get(api::status))
         .route("/api/stats", get(api::stats))
         .route("/api/stats/clear", post(api::clear_stats))
