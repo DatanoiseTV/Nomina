@@ -167,6 +167,17 @@ export const api = {
   updateConditionalForward: (id, body) => request("PUT", `/api/conditional-forwards/${id}`, body),
   deleteConditionalForward: (id) => request("DELETE", `/api/conditional-forwards/${id}`),
 
+  // ---- Query log (persistent, paginated) ----
+  queryLog: (params) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params || {})) {
+      if (v !== undefined && v !== null && v !== "") qs.set(k, v);
+    }
+    const s = qs.toString();
+    return request("GET", `/api/queries${s ? "?" + s : ""}`);
+  },
+  clearQueryLog: () => request("DELETE", "/api/queries"),
+
   // ---- DynDNS tokens ----
   listDyndnsTokens: () => request("GET", "/api/dyndns/tokens"),
   createDyndnsToken: (body) => request("POST", "/api/dyndns/tokens", body),

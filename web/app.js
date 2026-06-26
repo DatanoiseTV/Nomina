@@ -16,6 +16,7 @@ import { renderRules } from "./views/rules.js";
 import { renderRewrites } from "./views/rewrites.js";
 import { renderConditional } from "./views/conditional.js";
 import { renderDyndns } from "./views/dyndns.js";
+import { renderQueries } from "./views/queries.js";
 
 // ---- Theme -----------------------------------------------------------------
 const THEME_KEY = "picons-theme";
@@ -57,6 +58,7 @@ const state = {
 const routes = [
   { re: /^\/?$/, view: renderDashboard, nav: "dashboard", title: "Dashboard" },
   { re: /^\/dashboard$/, view: renderDashboard, nav: "dashboard", title: "Dashboard" },
+  { re: /^\/queries(?:\?.*)?$/, view: renderQueries, nav: "queries", title: "Request log" },
   { re: /^\/zones$/, view: renderZones, nav: "zones", title: "Zones" },
   { re: /^\/zones\/(\d+)$/, view: renderZoneDetail, nav: "zones", title: "Zone" },
   { re: /^\/secondary$/, view: renderSecondary, nav: "secondary", title: "Secondary zones" },
@@ -73,6 +75,7 @@ const routes = [
 const NAV_ITEMS = [
   { section: "Overview" },
   { id: "dashboard", label: "Dashboard", href: "#/dashboard", icon: "dashboard" },
+  { id: "queries", label: "Request log", href: "#/queries", icon: "inbox" },
   { section: "DNS" },
   { id: "zones", label: "Zones", href: "#/zones", icon: "zones" },
   { id: "views", label: "Views", href: "#/views", icon: "views" },

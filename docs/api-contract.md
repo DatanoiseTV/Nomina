@@ -112,6 +112,18 @@ IPv6 → /48); `full` retains real IPs. `RecentQuery.client` reflects the mode.
 Clears retained per-query detail (recent queries + top domains) and resets the
 edge cache and its hit/miss counters. Aggregate query counters are kept. → `204`.
 
+#### `GET /api/queries`
+The persistent request log (populated only when `query_log` is `anonymized` or
+`full`). Paginated, filterable, and sortable.
+
+Query params: `page` (default 1), `per_page` (default 50, max 500), `q` (substring
+match on name or client), `outcome`, `qtype`, `sort` ∈ `at | name | client | qtype
+| outcome` (default `at`), `desc` (default `true`).
+→ `200 { "queries": [RecentQuery], "total": N, "page": P, "per_page": K }`
+
+#### `DELETE /api/queries`
+Permanently deletes all persisted query-log rows. → `204`.
+
 ### Auth
 
 #### `POST /api/auth/login`

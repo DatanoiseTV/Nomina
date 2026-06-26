@@ -359,6 +359,7 @@ code, .mono { font-family: var(--font-mono); }
   border-radius: var(--radius-xs);
 }
 .btn-icon:hover { background: var(--surface-hover); color: var(--text); }
+.btn-icon.btn-icon-sm { padding: 4px; }
 .btn-icon.btn-danger { color: #fff; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn:disabled:active { transform: none; }

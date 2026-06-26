@@ -98,9 +98,10 @@ function row(rw, reload) {
   ]);
 }
 
-function openRewriteDialog({ rewrite, onSaved }) {
+export function openRewriteDialog({ rewrite, prefillDomain, onSaved }) {
   const isEdit = !!rewrite;
-  const domain = h("input", { type: "text", name: "domain", value: rewrite ? rewrite.domain : "", placeholder: "ads.example.com", required: true });
+  const initialDomain = rewrite ? rewrite.domain : (prefillDomain || "");
+  const domain = h("input", { type: "text", name: "domain", value: initialDomain, placeholder: "ads.example.com", required: true });
   const target = h("input", { type: "text", name: "target", value: rewrite ? rewrite.target : "", placeholder: "1.2.3.4 or host.example.com", required: true });
   const comment = h("input", { type: "text", name: "comment", value: rewrite && rewrite.comment ? rewrite.comment : "", placeholder: "optional note" });
 

@@ -7,6 +7,11 @@ All notable changes to PicoNS are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Request log page** — a paginated, filterable (search/outcome/type), sortable
+  view of the persistent query log at `#/queries`, with **per-row quick actions**:
+  block a domain (deny rule), allow it (allow rule), or open a prefilled rewrite.
+  The same actions appear on the dashboard's recent-queries table, and the
+  dashboard top-domains/top-blocked/recent cards gained "Show all" links into it.
 - **DynDNS** — DynDNS2-compatible `GET /nic/update` endpoint (also `/v3/update`)
   for routers and dynamic-IP clients (ddclient, FRITZ!Box, UniFi, OpenWrt,
   No-IP). Updates are authenticated by dedicated scoped tokens (HTTP Basic auth,

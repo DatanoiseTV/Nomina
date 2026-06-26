@@ -5,6 +5,7 @@ import {
   h, clear, badge, fmtInt, fmtUptime, fmtTime, fmtClock,
   loadingBlock, emptyState, confirmDialog, toast, toastError,
 } from "../ui.js";
+import { queryActions } from "./query-actions.js";
 
 const POLL_MS = 5000;
 
@@ -305,7 +306,7 @@ function privacyEmpty() {
   ]);
 }
 
-function topTable(title, rows) {
+function topTable(title, rows, href) {
   let body;
   if (!rows || !rows.length) {
     body = h("div.card-pad", h("div.inline-note", "No data yet."));
@@ -326,7 +327,12 @@ function topTable(title, rows) {
       ])
     );
   }
-  return h("div.card", [h("div.card-head", [h("h2", title)]), body]);
+  const headParts = [h("h2", title)];
+  if (href) {
+    headParts.push(h("div.spacer"));
+    headParts.push(h("a.btn.btn-sm", { href }, "Show all"));
+  }
+  return h("div.card", [h("div.card-head", headParts), body]);
 }
 
 function renderTop(host, stats) {
@@ -337,8 +343,8 @@ function renderTop(host, stats) {
       off
         ? h("div.card", privacyEmpty())
         : h("div.grid", { style: "grid-template-columns:repeat(auto-fit,minmax(280px,1fr))" }, [
-            topTable("Top domains", stats.top_domains || []),
-            topTable("Top blocked", stats.top_blocked || []),
+            topTable("Top domains", stats.top_domains || [], "#/queries"),
+            topTable("Top blocked", stats.top_blocked || [], "#/queries?outcome=blocked"),
           ]),
     ])
   );
@@ -348,7 +354,8 @@ function renderRecent(host, stats, refreshNow) {
   const off = stats.query_log === "off";
   const recent = stats.recent || [];
 
-  const headChildren = [h("h2", "Recent queries"), h("div.spacer")];
+  const headChildren = [h("h2", "Recent queries"), h("div.spacer"),
+    h("a.btn.btn-sm", { href: "#/queries", style: "margin-right:8px" }, "Show all")];
   if (!off) {
     const clearBtn = h("button.btn.btn-sm", { type: "button" }, "Clear log");
     clearBtn.addEventListener("click", () => {
@@ -382,6 +389,7 @@ function renderRecent(host, stats, refreshNow) {
         h("thead", h("tr", [
           h("th", "Time"), h("th", "Client"), h("th", "View"),
           h("th", "Name"), h("th", "Type"), h("th", "Outcome"), h("th", "RCODE"),
+          h("th", { style: "text-align:right" }, "Actions"),
         ])),
         h("tbody", recent.map((q) =>
           h("tr", [
@@ -392,6 +400,7 @@ function renderRecent(host, stats, refreshNow) {
             h("td.mono", q.qtype),
             h("td", badge(q.outcome, OUTCOME_KIND[q.outcome] || "muted")),
             h("td", badge(q.rcode, RCODE_KIND[q.rcode] || "muted")),
+            h("td.actions", queryActions(q.name, refreshNow)),
           ])
         )),
       ])
