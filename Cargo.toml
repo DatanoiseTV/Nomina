@@ -1,0 +1,54 @@
+[package]
+name = "picons"
+version = "0.1.0"
+edition = "2024"
+description = "A secure, split-horizon authoritative + forwarding DNS server for homelabs, with a web UI and API. Single self-contained binary."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/DatanoiseTV/PicoNS"
+readme = "README.md"
+rust-version = "1.85"
+
+[dependencies]
+anyhow = "1"
+argon2 = "0.5"
+axum = { version = "0.8", features = ["macros"] }
+base64 = "0.22"
+clap = { version = "4", features = ["derive", "env"] }
+futures-util = "0.3"
+hickory-proto = "0.26"
+hickory-resolver = { version = "0.26", features = ["tokio", "system-config", "tls-ring", "https-ring"] }
+hickory-server = { version = "0.26", features = ["tls-ring", "https-ring"] }
+hyper = { version = "1", features = ["server", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto"] }
+ipnet = { version = "2", features = ["serde"] }
+parking_lot = "0.12"
+rand = "0.8"
+rcgen = "0.13"
+rusqlite = { version = "0.37", features = ["bundled"] }
+rust-embed = { version = "8", features = ["mime-guess"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
+rustls-pemfile = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+subtle = "2"
+thiserror = "2"
+time = { version = "=0.3.41", features = ["formatting", "parsing", "serde"] }
+tokio = { version = "1", features = ["full"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "logging", "tls12"] }
+toml = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["set-header", "trace", "compression-gzip", "limit"] }
+tower-service = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Release profile: optimize for size + speed, but keep unwinding panics.
+# PicoNS parses untrusted DNS bytes via hickory; `panic = "abort"` would let a
+# single malformed packet take down the whole process and would neuter tokio's
+# per-task panic isolation. Keep the default unwind behaviour.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "unwind"

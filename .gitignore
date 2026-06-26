@@ -1,0 +1,7 @@
+/target
+*.db
+*.db-*
+/data/
+*.pem
+.DS_Store
+/picons.local.toml
