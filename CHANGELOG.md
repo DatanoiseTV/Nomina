@@ -16,6 +16,9 @@ Initial release. A single self-contained binary.
 - Resolution modes for non-authoritative names: **forward** (selectable
   upstreams over UDP/TCP/DoT/DoH, with caching), **recursive** (from the root
   servers), or **off** (authoritative-only / universal nameserver).
+- Conditional forwarding: per-domain dedicated upstreams, matched before the
+  global resolver and effective even in authoritative-only mode.
+- BIND zone-file import and export.
 - Filtering: Pi-hole-style blocklists from remote sources (hosts / domain
   formats), cached locally in SQLite; manual allow/deny rules; AdGuard-style
   rewrites (domain + subdomains to an IP or CNAME, effective even in
@@ -31,7 +34,10 @@ Initial release. A single self-contained binary.
 - Argon2 password hashing, server-side sessions (hashed at rest), strict
   same-site cookies, CSRF protection, and login throttling.
 - Live reconfiguration of zones, records, views, forwarders, resolution mode,
-  blocklists, rules, and rewrites without a restart.
+  blocklists, rules, rewrites, and conditional forwarders without a restart.
+- Privacy-aware query logging (off / anonymized / full, default off) and a
+  dashboard with req/s rate, a time-series sparkline, top domains, and
+  per-outcome counters.
 
 ### Security & operations
 - Selectable bind addresses for DNS and the management interface; optional CIDR

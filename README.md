@@ -13,6 +13,9 @@ ships with a web UI and JSON API.
 - **Authoritative + resolver** — serve your zones authoritatively and either
   **forward** to upstreams (1.1.1.1, 9.9.9.9, or DoT/DoH resolvers), **recurse**
   from the root servers, or run **authoritative-only** for an isolated network.
+- **Conditional forwarding** — send specific domains to dedicated upstreams
+  (`corp.internal → 10.0.0.1`, `consul → 127.0.0.1:8600`), even with the global
+  resolver off.
 - **Filtering (Pi-hole style)** — subscribe to remote blocklists (hosts/domain
   lists, cached locally), add manual allow/deny rules, and sinkhole with
   NXDOMAIN, `0.0.0.0`, or REFUSED.
@@ -20,7 +23,11 @@ ships with a web UI and JSON API.
   or CNAME (`ads.foobar.com → 1.2.3.4`), even with forwarding disabled.
 - **Modern transports** — plain UDP/TCP, DNS-over-TLS, and DNS-over-HTTPS
   (RFC 8484, GET **and** POST).
-- **Zone transfers** — serve AXFR to IP-allow-listed secondaries.
+- **Zone transfers & import** — serve AXFR to IP-allow-listed secondaries;
+  import/export BIND zone files.
+- **Privacy-first stats** — query logging is **off by default** (aggregate
+  counters only); opt into anonymized (masked IPs) or full logging. The
+  dashboard shows req/s, a rate sparkline, top domains, and blocked counts.
 - **Secure by default** — argon2 logins, server-side sessions, CSRF protection,
   login throttling, strict security headers, a strict CSP, selectable bind
   addresses, an optional management allow-list, and privilege dropping.
@@ -110,8 +117,7 @@ implemented (contributions/feedback welcome):
 
 - Secondary/slave mode (pulling zones via AXFR/IXFR with SOA-driven refresh).
 - DNSSEC signing of authoritative zones.
-- Conditional forwarding (per-domain upstreams) and DoQ.
-- Prometheus metrics and a downloadable query log.
+- DNS-over-QUIC and Prometheus metrics.
 
 ## License
 
