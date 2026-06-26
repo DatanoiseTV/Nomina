@@ -87,7 +87,17 @@ pub async fn status(State(state): State<SharedState>, _auth: Authed) -> ApiResul
 }
 
 pub async fn stats(State(state): State<SharedState>, _auth: Authed) -> Response {
-    ok_json(state.stats.snapshot())
+    let mut snap = state.stats.snapshot();
+    if let Some(obj) = snap.as_object_mut() {
+        obj.insert("query_log".into(), json!(state.query_log()));
+    }
+    ok_json(snap)
+}
+
+/// Clear retained per-query detail (recent queries + top domains).
+pub async fn clear_stats(State(state): State<SharedState>, _auth: Authed) -> Response {
+    state.stats.clear_log();
+    StatusCode::NO_CONTENT.into_response()
 }
 
 // ---------------------------------------------------------------------------
@@ -678,6 +688,7 @@ pub struct SettingsUpdate {
     resolution_mode: Option<ResolutionMode>,
     block_mode: Option<BlockMode>,
     blocking_enabled: Option<bool>,
+    query_log: Option<QueryLog>,
     cache_size: Option<u64>,
     cache_min_ttl: Option<u32>,
     cache_max_ttl: Option<u32>,
@@ -720,6 +731,9 @@ pub async fn put_settings(
     }
     if let Some(v) = req.blocking_enabled {
         settings.blocking_enabled = v;
+    }
+    if let Some(v) = req.query_log {
+        settings.query_log = v;
     }
     if let Some(v) = req.cache_size {
         settings.cache_size = v;

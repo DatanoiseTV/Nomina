@@ -63,7 +63,8 @@ pub async fn resolve_query(
     };
 
     state.stats.record(
-        client.to_string(),
+        state.query_log(),
+        client,
         view,
         qname.to_string().trim_end_matches('.').to_string(),
         qtype.to_string(),

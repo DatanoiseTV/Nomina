@@ -76,18 +76,34 @@ Rolling query statistics since start.
   "total": 10456,
   "authoritative": 8210,
   "forwarded": 1980,
-  "cached": 1500,
+  "cached": 0,
   "nxdomain": 210,
   "refused": 12,
   "servfail": 4,
+  "blocked": 540,
   "by_qtype": { "A": 6000, "AAAA": 3000, "PTR": 400 },
-  "recent": [
-    { "at": "2026-06-26T10:00:01Z", "client": "192.168.1.50", "view": "internal",
-      "name": "nas.home.lan", "qtype": "A", "outcome": "authoritative", "rcode": "NOERROR" }
-  ]
+  "qps_10s": 4.2,
+  "qps_1m": 3.8,
+  "qps_avg": 2.1,
+  "series_per_sec": [0,1,3,2,5, "...60 values, oldest first"],
+  "query_log": "off",
+  "recent": [ /* RecentQuery, empty unless query_log != off */ ],
+  "top_domains": [ { "name": "nas.home.lan", "count": 1200 } ],
+  "top_blocked": [ { "name": "ads.example.com", "count": 300 } ]
 }
 ```
-`outcome` ∈ `authoritative | forwarded | cached | nxdomain | refused | servfail`.
+`outcome` ∈ `authoritative | forwarded | cached | nxdomain | refused | servfail |
+blocked | rewritten`. Aggregate counters, `qps_*`, and `series_per_sec` are always
+present (non-identifying). `recent`, `top_domains`, and `top_blocked` are only
+populated when `query_log` is `anonymized` or `full`.
+
+**Privacy:** the `query_log` setting controls per-query retention and defaults to
+`off` (no client IPs/names retained). `anonymized` masks client IPs (IPv4 → /24,
+IPv6 → /48); `full` retains real IPs. `RecentQuery.client` reflects the mode.
+
+#### `POST /api/stats/clear`
+Clears retained per-query detail (recent queries + top domains). Aggregate
+counters are kept. → `204`.
 
 ### Auth
 
@@ -203,6 +219,8 @@ Validation errors return `422 validation` with per-field detail.
   "resolution_mode": "forward",
   "block_mode": "nxdomain",
   "blocking_enabled": true,
+  "query_log": "off",
+  "allow_axfr_from": [],
   "cache_size": 1024,
   "cache_min_ttl": 0,
   "cache_max_ttl": 86400,
@@ -215,6 +233,9 @@ Validation errors return `422 validation` with per-field detail.
   outside local zones — for a universal/internal-only nameserver).
 - `block_mode` ∈ `nxdomain | zero_ip | refused` — how blocked names are answered.
 - `blocking_enabled` toggles blocklist filtering (manual rules/rewrites still apply).
+- `query_log` ∈ `off | anonymized | full` — privacy-aware per-query logging (default
+  `off`). See `GET /api/stats`.
+- `allow_axfr_from` — CIDRs permitted to request AXFR zone transfers (empty = off).
 - `GET /api/settings` → `200 { "settings": Settings }`
 - `PUT /api/settings` body partial → `200 { "settings": Settings }`. Changes rebuild
   the resolver and reload the filter live (no restart).

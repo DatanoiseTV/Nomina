@@ -150,6 +150,26 @@ impl Default for BlockMode {
     }
 }
 
+/// How much per-query detail to retain for the dashboard. Privacy-aware: `off`
+/// keeps only aggregate, non-identifying counters (the default).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum QueryLog {
+    /// Aggregate counters only. No client IPs, names, or recent-query list.
+    Off,
+    /// Record recent queries and top domains, but anonymize client IPs
+    /// (IPv4 → /24, IPv6 → /48).
+    Anonymized,
+    /// Record full client IPs and names. Opt-in.
+    Full,
+}
+
+impl Default for QueryLog {
+    fn default() -> Self {
+        QueryLog::Off
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     /// Upstream resolvers used when `resolution_mode` is `forward`.
@@ -163,6 +183,9 @@ pub struct Settings {
     /// Enable blocklist filtering of non-authoritative names.
     #[serde(default = "default_true")]
     pub blocking_enabled: bool,
+    /// Privacy-aware query logging level for the dashboard.
+    #[serde(default)]
+    pub query_log: QueryLog,
     pub cache_size: u64,
     pub cache_min_ttl: u32,
     pub cache_max_ttl: u32,
@@ -198,6 +221,7 @@ impl Default for Settings {
             resolution_mode: ResolutionMode::Forward,
             block_mode: BlockMode::NxDomain,
             blocking_enabled: true,
+            query_log: QueryLog::Off,
             cache_size: 1024,
             cache_min_ttl: 0,
             cache_max_ttl: 86400,
