@@ -143,6 +143,7 @@ export const api = {
 
   // ---- Filtering: blocklists ----
   listBlocklists: () => request("GET", "/api/blocklists"),
+  blocklistCatalog: () => request("GET", "/api/blocklists/catalog"),
   createBlocklist: (body) => request("POST", "/api/blocklists", body),
   updateBlocklist: (id, body) => request("PUT", `/api/blocklists/${id}`, body),
   deleteBlocklist: (id) => request("DELETE", `/api/blocklists/${id}`),

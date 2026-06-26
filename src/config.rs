@@ -46,6 +46,8 @@ pub struct DnsConfig {
     pub doh_listen: Vec<SocketAddr>,
     /// DNS-over-QUIC listen addresses (UDP; requires TLS material).
     pub doq_listen: Vec<SocketAddr>,
+    /// DNS-over-HTTP/3 listen addresses (UDP; requires TLS material).
+    pub doh3_listen: Vec<SocketAddr>,
     /// HTTP path the DoH endpoint answers on.
     pub doh_path: String,
     /// Idle timeout for TCP/DoT connections, seconds.
@@ -104,6 +106,7 @@ impl Default for DnsConfig {
             dot_listen: vec![],
             doh_listen: vec![],
             doq_listen: vec![],
+            doh3_listen: vec![],
             doh_path: "/dns-query".into(),
             tcp_timeout_secs: 10,
         }
@@ -160,5 +163,6 @@ impl Config {
             || !self.dns.dot_listen.is_empty()
             || !self.dns.doh_listen.is_empty()
             || !self.dns.doq_listen.is_empty()
+            || !self.dns.doh3_listen.is_empty()
     }
 }

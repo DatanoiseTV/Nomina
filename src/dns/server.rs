@@ -18,6 +18,7 @@ pub struct DnsSockets {
     plain: Vec<(SocketAddr, UdpSocket, TcpListener)>,
     dot: Vec<(SocketAddr, TcpListener)>,
     doq: Vec<(SocketAddr, UdpSocket)>,
+    doh3: Vec<(SocketAddr, UdpSocket)>,
 }
 
 /// Bind all plain (UDP/TCP), DoT, and DoQ sockets. Call before dropping privileges.
@@ -46,7 +47,19 @@ pub async fn bind(config: &Config) -> anyhow::Result<DnsSockets> {
             .with_context(|| format!("binding DoQ {addr}"))?;
         doq.push((*addr, udp));
     }
-    Ok(DnsSockets { plain, dot, doq })
+    let mut doh3 = Vec::new();
+    for addr in &config.dns.doh3_listen {
+        let udp = UdpSocket::bind(addr)
+            .await
+            .with_context(|| format!("binding DoH3 {addr}"))?;
+        doh3.push((*addr, udp));
+    }
+    Ok(DnsSockets {
+        plain,
+        dot,
+        doq,
+        doh3,
+    })
 }
 
 /// Describes one active listener for the status API.
@@ -65,6 +78,7 @@ pub async fn run(
     sockets: DnsSockets,
     dot_config: Option<Arc<ServerConfig>>,
     doq_config: Option<Arc<ServerConfig>>,
+    doh3_config: Option<Arc<ServerConfig>>,
 ) -> anyhow::Result<()> {
     let timeout = Duration::from_secs(config.dns.tcp_timeout_secs);
     let mut server = Server::new(handler);
@@ -105,6 +119,21 @@ pub async fn run(
         None => {}
     }
 
+    match &doh3_config {
+        Some(tls) => {
+            for (addr, udp) in sockets.doh3 {
+                server
+                    .register_h3_listener_with_tls_config(udp, timeout, tls.clone(), None)
+                    .with_context(|| format!("registering DoH3 {addr}"))?;
+                tracing::info!("DNS-over-HTTP/3 listening on {addr}");
+            }
+        }
+        None if !sockets.doh3.is_empty() => {
+            tracing::warn!("DoH3 listeners configured but no TLS material; skipping");
+        }
+        None => {}
+    }
+
     server.block_until_done().await.context("DNS server failed")?;
     Ok(())
 }
@@ -141,6 +170,13 @@ pub fn listener_infos(config: &Config) -> Vec<ListenerInfo> {
     for addr in &config.dns.doq_listen {
         out.push(ListenerInfo {
             kind: "doq".into(),
+            addr: addr.to_string(),
+            enabled: true,
+        });
+    }
+    for addr in &config.dns.doh3_listen {
+        out.push(ListenerInfo {
+            kind: "doh3".into(),
             addr: addr.to_string(),
             enabled: true,
         });

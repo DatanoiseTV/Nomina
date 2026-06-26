@@ -24,6 +24,8 @@ dot_listen = []        # e.g. ["0.0.0.0:853"]
 doh_listen = []        # e.g. ["0.0.0.0:443"]
 # DNS-over-QUIC (RFC 9250, UDP). Requires TLS material. Empty = disabled.
 doq_listen = []        # e.g. ["0.0.0.0:853"]
+# DNS-over-HTTP/3 (UDP). Requires TLS material. Empty = disabled.
+doh3_listen = []       # e.g. ["0.0.0.0:443"]
 doh_path = "/dns-query"
 tcp_timeout_secs = 10
 
