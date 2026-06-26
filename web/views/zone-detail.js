@@ -7,20 +7,129 @@ import {
   applyFieldErrors, toast, toastError,
 } from "../ui.js";
 
-// Record type -> data field hint and placeholder (per API contract table).
-const RECORD_TYPES = {
-  A:     { placeholder: "10.0.0.5", hint: "IPv4 address." },
-  AAAA:  { placeholder: "fd00::5", hint: "IPv6 address." },
-  CNAME: { placeholder: "host.home.lan.", hint: "Canonical target name (use a trailing dot for FQDN)." },
-  MX:    { placeholder: "10 mail.home.lan.", hint: "Format: <preference> <exchange>." },
-  TXT:   { placeholder: "v=spf1 -all", hint: "Free text; quotes optional." },
-  NS:    { placeholder: "ns1.home.lan.", hint: "Nameserver name." },
-  SRV:   { placeholder: "0 5 5060 sip.home.lan.", hint: "Format: <priority> <weight> <port> <target>." },
-  PTR:   { placeholder: "nas.home.lan.", hint: "Target name; the record name is the reversed-IP label." },
-  CAA:   { placeholder: '0 issue "letsencrypt.org"', hint: 'Format: <flags> <tag> <value>.' },
+// Per-type structured fields. Each field becomes one input; on save the values
+// are joined (in order) into the presentation-format `data` string the API
+// expects, and on edit an existing `data` string is split back into fields.
+// `quote` wraps/strips double quotes; `rest` absorbs all remaining tokens (for
+// trailing free-form data like keys, hex, or TXT). Order matches the RFC
+// presentation format and is verified by the `all_supported_types_parse` test.
+const NUM = "number";
+const FIELD_SCHEMAS = {
+  A: [{ key: "address", label: "IPv4 address", placeholder: "203.0.113.10" }],
+  AAAA: [{ key: "address", label: "IPv6 address", placeholder: "2001:db8::1" }],
+  ANAME: [{ key: "target", label: "Target name", placeholder: "host.example.com." }],
+  CNAME: [{ key: "target", label: "Target name", placeholder: "host.example.com.", hint: "Trailing dot = absolute; otherwise relative to the zone." }],
+  NS: [{ key: "target", label: "Nameserver", placeholder: "ns1.example.com." }],
+  PTR: [{ key: "target", label: "Target name", placeholder: "host.example.com.", hint: "The record name is the reversed-IP label." }],
+  MX: [
+    { key: "preference", type: NUM, label: "Preference", placeholder: "10", width: 120 },
+    { key: "exchange", label: "Mail server", placeholder: "mail.example.com." },
+  ],
+  SRV: [
+    { key: "priority", type: NUM, label: "Priority", placeholder: "0", width: 100 },
+    { key: "weight", type: NUM, label: "Weight", placeholder: "5", width: 100 },
+    { key: "port", type: NUM, label: "Port", placeholder: "5060", width: 110 },
+    { key: "target", label: "Target", placeholder: "sip.example.com." },
+  ],
+  CAA: [
+    { key: "flags", type: NUM, label: "Flags", placeholder: "0", width: 90 },
+    { key: "tag", type: "select", label: "Tag", options: ["issue", "issuewild", "iodef"] },
+    { key: "value", label: "Value", placeholder: "letsencrypt.org", quote: true },
+  ],
+  TXT: [{ key: "text", label: "Text", placeholder: "v=spf1 -all", rest: true, hint: "Free text." }],
+  HINFO: [
+    { key: "cpu", label: "CPU", placeholder: "Intel", quote: true },
+    { key: "os", label: "OS", placeholder: "Linux", quote: true },
+  ],
+  SSHFP: [
+    { key: "algorithm", type: NUM, label: "Algorithm", placeholder: "2", width: 120 },
+    { key: "fptype", type: NUM, label: "FP type", placeholder: "1", width: 120 },
+    { key: "fingerprint", label: "Fingerprint (hex)", placeholder: "123456abcdef...", rest: true },
+  ],
+  TLSA: [
+    { key: "usage", type: NUM, label: "Usage", placeholder: "3", width: 100 },
+    { key: "selector", type: NUM, label: "Selector", placeholder: "0", width: 110 },
+    { key: "matching", type: NUM, label: "Matching", placeholder: "1", width: 110 },
+    { key: "cert", label: "Certificate data (hex)", placeholder: "aabbccdd...", rest: true },
+  ],
+  SMIMEA: [
+    { key: "usage", type: NUM, label: "Usage", placeholder: "3", width: 100 },
+    { key: "selector", type: NUM, label: "Selector", placeholder: "0", width: 110 },
+    { key: "matching", type: NUM, label: "Matching", placeholder: "1", width: 110 },
+    { key: "cert", label: "Certificate data (hex)", placeholder: "aabbccdd...", rest: true },
+  ],
+  CERT: [
+    { key: "cert_type", type: NUM, label: "Type", placeholder: "1", width: 100 },
+    { key: "key_tag", type: NUM, label: "Key tag", placeholder: "12345", width: 130 },
+    { key: "algorithm", type: NUM, label: "Algorithm", placeholder: "8", width: 120 },
+    { key: "certificate", label: "Certificate (base64)", placeholder: "aGVsbG8=", rest: true },
+  ],
+  CSYNC: [
+    { key: "soa_serial", type: NUM, label: "SOA serial", placeholder: "123", width: 140 },
+    { key: "flags", type: NUM, label: "Flags", placeholder: "3", width: 100 },
+    { key: "types", label: "Types", placeholder: "A NS AAAA", rest: true },
+  ],
+  NAPTR: [
+    { key: "order", type: NUM, label: "Order", placeholder: "100", width: 100 },
+    { key: "preference", type: NUM, label: "Preference", placeholder: "10", width: 120 },
+    { key: "flags", label: "Flags", placeholder: "U", quote: true, width: 110 },
+    { key: "service", label: "Service", placeholder: "E2U+sip", quote: true },
+    { key: "regexp", label: "Regexp", placeholder: "!^.*$!sip:info@example.com!", quote: true },
+    { key: "replacement", label: "Replacement", placeholder: "." },
+  ],
+  SVCB: [
+    { key: "priority", type: NUM, label: "Priority", placeholder: "1", width: 100 },
+    { key: "target", label: "Target", placeholder: ". or svc.example.com.", width: 200 },
+    { key: "params", label: "Parameters", placeholder: 'alpn="h2,h3" port=443', rest: true },
+  ],
+  HTTPS: [
+    { key: "priority", type: NUM, label: "Priority", placeholder: "1", width: 100 },
+    { key: "target", label: "Target", placeholder: ". or svc.example.com.", width: 200 },
+    { key: "params", label: "Parameters", placeholder: 'alpn="h2,h3" port=443', rest: true },
+  ],
+  OPENPGPKEY: [{ key: "key", label: "Public key (base64)", placeholder: "mQENB...", rest: true }],
 };
-// SOA is managed via the zone settings, not as a normal record.
-const TYPE_ORDER = ["A", "AAAA", "CNAME", "MX", "TXT", "NS", "SRV", "PTR", "CAA"];
+// Common types first, then the rest alphabetically. SOA is managed via the
+// zone settings, not as a normal record; DNSSEC records are auto-generated.
+const TYPE_ORDER = [
+  "A", "AAAA", "CNAME", "MX", "TXT", "NS", "SRV", "PTR", "CAA",
+  "ANAME", "CERT", "CSYNC", "HINFO", "HTTPS", "NAPTR", "OPENPGPKEY", "SMIMEA", "SSHFP", "SVCB", "TLSA",
+];
+
+// Quote-aware tokenizer for splitting an existing data string into fields.
+function tokenizeData(s) {
+  return (s || "").match(/"[^"]*"|\S+/g) || [];
+}
+
+// Build the `data` presentation string from the current field inputs.
+function assembleData(type, inputs) {
+  const schema = FIELD_SCHEMAS[type] || [{ key: "data", rest: true }];
+  const parts = [];
+  for (const f of schema) {
+    const raw = (inputs[f.key] ? inputs[f.key].value : "").trim();
+    if (f.rest) parts.push(raw);
+    else if (f.quote) parts.push(`"${raw.replace(/^"|"$/g, "")}"`);
+    else parts.push(raw);
+  }
+  return parts.join(" ").trim();
+}
+
+// Split an existing `data` string back into per-field values for editing.
+function splitData(type, data) {
+  const schema = FIELD_SCHEMAS[type] || [{ key: "data", rest: true }];
+  const toks = tokenizeData(data);
+  const vals = {};
+  let i = 0;
+  for (const f of schema) {
+    if (f.rest) { vals[f.key] = toks.slice(i).join(" "); i = toks.length; }
+    else {
+      let t = toks[i++] || "";
+      if (f.quote) t = t.replace(/^"|"$/g, "");
+      vals[f.key] = t;
+    }
+  }
+  return vals;
+}
 
 export async function renderZoneDetail(root, { params, navigate }) {
   const zoneId = Number(params[0]);
@@ -324,9 +433,6 @@ function openRecordDialog({ zone, views, record, onSaved }) {
     )
   );
 
-  const data = h("input", { type: "text", name: "data", value: record ? record.data : "", required: true });
-  const dataHint = h("div.hint");
-
   const ttl = h("input", { type: "number", name: "ttl", value: record && record.ttl != null ? record.ttl : "", min: 0,
     placeholder: `default (${zone.default_ttl})` });
 
@@ -340,13 +446,39 @@ function openRecordDialog({ zone, views, record, onSaved }) {
 
   const enabled = h("input", { type: "checkbox", name: "enabled", checked: record ? record.enabled : true });
 
-  function syncTypeHints() {
-    const meta = RECORD_TYPES[typeSel.value] || {};
-    data.placeholder = meta.placeholder || "";
-    dataHint.textContent = meta.hint || "";
+  // Structured, per-type data fields. Re-rendered when the type changes; the
+  // current input elements are tracked in `fieldInputs` for assembly on save.
+  const fieldsHost = h("div");
+  const dataErr = h("div.err", { style: "display:none" });
+  let fieldInputs = {};
+
+  function renderFields(type, values) {
+    clear(fieldsHost);
+    fieldInputs = {};
+    const schema = FIELD_SCHEMAS[type] || [{ key: "data", label: "Data", rest: true }];
+    const fieldEls = schema.map((f) => {
+      let input;
+      if (f.type === "select") {
+        input = h("select", { name: f.key },
+          f.options.map((o) => h("option", { value: o, selected: (values[f.key] || f.options[0]) === o }, o)));
+      } else {
+        input = h("input", {
+          type: f.type === "number" ? "number" : "text",
+          name: f.key, value: values[f.key] || "", placeholder: f.placeholder || "",
+        });
+      }
+      fieldInputs[f.key] = input;
+      const el = h("div.field", [h("label", f.label), input, f.hint ? h("div.hint", f.hint) : null]);
+      el.style.flex = f.rest ? "1 1 100%" : (f.width ? `0 0 ${f.width}px` : "1 1 160px");
+      return el;
+    });
+    fieldsHost.appendChild(h("div", { style: "display:flex;gap:10px;flex-wrap:wrap" }, fieldEls));
   }
-  typeSel.addEventListener("change", syncTypeHints);
-  syncTypeHints();
+
+  // Seed from the existing record (split its data string), else empty.
+  const initialType = record ? record.type : "A";
+  renderFields(initialType, record ? splitData(record.type, record.data) : {});
+  typeSel.addEventListener("change", () => renderFields(typeSel.value, {}));
 
   const form = h("form", [
     h("div.form-row", [
@@ -354,7 +486,7 @@ function openRecordDialog({ zone, views, record, onSaved }) {
         h("div.hint", 'Use "@" for the zone apex. Relative to the zone.')]),
       h("div.field", { style: "max-width:130px" }, [h("label", "Type"), typeSel]),
     ]),
-    h("div.field", [h("label", "Data"), data, dataHint]),
+    h("div.field", [h("label", "Data"), fieldsHost, dataErr]),
     h("div.form-row", [
       h("div.field", [h("label", "TTL (seconds)"), ttl]),
       h("div.field", [h("label", "View"), viewSel]),
@@ -374,14 +506,20 @@ function openRecordDialog({ zone, views, record, onSaved }) {
         kind: "primary",
         onClick: async () => {
           form.querySelectorAll(".invalid").forEach((x) => x.classList.remove("invalid"));
-          form.querySelectorAll(".err").forEach((x) => x.remove());
+          dataErr.style.display = "none";
           if (!name.value.trim()) { name.classList.add("invalid"); return false; }
-          if (!data.value.trim()) { data.classList.add("invalid"); return false; }
+
+          // Every structured field is required (the trailing free-form field too).
+          let missing = false;
+          for (const inp of Object.values(fieldInputs)) {
+            if (!String(inp.value).trim()) { inp.classList.add("invalid"); missing = true; }
+          }
+          if (missing) { dataErr.textContent = "Fill in all data fields."; dataErr.style.display = ""; return false; }
 
           const body = {
             name: name.value.trim(),
             type: typeSel.value,
-            data: data.value.trim(),
+            data: assembleData(typeSel.value, fieldInputs),
             view_id: viewSel.value === "" ? null : Number(viewSel.value),
             enabled: enabled.checked,
           };
@@ -397,7 +535,13 @@ function openRecordDialog({ zone, views, record, onSaved }) {
             }
             onSaved();
           } catch (err) {
-            if (err.status === 422 && applyFieldErrors(form, err)) return false;
+            // Server validates the assembled data string; surface its message
+            // (and the name error) inline rather than against a single field.
+            if (err.status === 422 && err.fields) {
+              if (err.fields.name) { name.classList.add("invalid"); }
+              if (err.fields.data) { dataErr.textContent = err.fields.data; dataErr.style.display = ""; }
+              if (err.fields.name || err.fields.data) return false;
+            }
             toastError(err);
             return false;
           }

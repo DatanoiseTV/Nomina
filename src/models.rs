@@ -433,8 +433,10 @@ pub const ROOT_SERVERS: &[&str] = &[
 
 /// Record types PicoNS lets users manage. `SOA` is excluded (managed via the
 /// zone) as are DNSSEC/transfer pseudo-types.
-pub const SUPPORTED_RECORD_TYPES: &[&str] =
-    &["A", "AAAA", "CNAME", "MX", "TXT", "NS", "SRV", "PTR", "CAA"];
+pub const SUPPORTED_RECORD_TYPES: &[&str] = &[
+    "A", "AAAA", "ANAME", "CAA", "CERT", "CNAME", "CSYNC", "HINFO", "HTTPS", "MX",
+    "NAPTR", "NS", "OPENPGPKEY", "PTR", "SMIMEA", "SRV", "SSHFP", "SVCB", "TLSA", "TXT",
+];
 
 /// Parse a textual record type into the hickory enum, restricted to the
 /// supported set.
@@ -607,5 +609,44 @@ mod tests {
         // A wildcard prefix behaves the same for subdomain matching.
         assert!(domain_covers("*.example.com", "x.example.com"));
         assert!(domain_covers("*.example.com", "example.com"));
+    }
+
+    #[test]
+    fn all_supported_types_parse() {
+        // A representative, valid presentation-format sample for every type in
+        // SUPPORTED_RECORD_TYPES. Verified against hickory's RData::try_from_str
+        // so the API never advertises a type it can't actually store.
+        let cases: &[(&str, &str)] = &[
+            ("A", "203.0.113.10"),
+            ("AAAA", "2001:db8::1"),
+            ("ANAME", "target.example.com."),
+            ("CAA", "0 issue \"letsencrypt.org\""),
+            ("CERT", "1 12345 8 aGVsbG8="),
+            ("CNAME", "host.example.com."),
+            ("CSYNC", "123 3 A NS AAAA"),
+            ("HINFO", "\"Intel\" \"Linux\""),
+            ("HTTPS", "1 . alpn=\"h2\""),
+            ("MX", "10 mail.example.com."),
+            ("NAPTR", "100 10 \"U\" \"E2U+sip\" \"!^.*$!sip:info@example.com!\" ."),
+            ("NS", "ns1.example.com."),
+            ("OPENPGPKEY", "aGVsbG8gd29ybGQ="),
+            ("PTR", "host.example.com."),
+            ("SMIMEA", "3 0 0 aabbccdd"),
+            ("SRV", "0 5 5060 sip.example.com."),
+            ("SSHFP", "2 1 123456789abcdef67890123456789abcdef67890"),
+            ("SVCB", "1 . alpn=\"h2\""),
+            ("TLSA", "3 0 1 aabbccdd"),
+            ("TXT", "v=spf1 -all"),
+        ];
+        // Every advertised type has a tested sample, and vice versa.
+        assert_eq!(cases.len(), SUPPORTED_RECORD_TYPES.len());
+        for (t, d) in cases {
+            assert!(
+                SUPPORTED_RECORD_TYPES.contains(t),
+                "{t} sampled but not advertised"
+            );
+            let rt = parse_record_type(t).unwrap_or_else(|e| panic!("{t}: {e}"));
+            parse_rdata(rt, d, "example.com").unwrap_or_else(|e| panic!("{t}: {e}"));
+        }
     }
 }

@@ -224,8 +224,22 @@ Endpoints:
 | `SRV`   | `<prio> <weight> <port> <target>`: `0 5 5060 sip.home.lan.`         |
 | `PTR`   | target name: `nas.home.lan.` (name is the reversed-IP label)        |
 | `CAA`   | `<flags> <tag> <value>`: `0 issue "letsencrypt.org"`                |
+| `ANAME` | target name: `host.example.com.`                                    |
+| `HINFO` | `<cpu> <os>` (quoted): `"Intel" "Linux"`                            |
+| `NAPTR` | `<order> <pref> <flags> <service> <regexp> <replacement>`           |
+| `SSHFP` | `<algorithm> <fp-type> <fingerprint-hex>`: `2 1 abcdef...`          |
+| `TLSA`  | `<usage> <selector> <matching> <cert-hex>`: `3 0 1 aabbccdd`        |
+| `SMIMEA`| `<usage> <selector> <matching> <cert-hex>`: `3 0 0 aabbccdd`        |
+| `CERT`  | `<type> <key-tag> <algorithm> <cert-base64>`: `1 12345 8 aGVsbG8=`  |
+| `CSYNC` | `<soa-serial> <flags> <types>`: `123 3 A NS AAAA`                   |
+| `SVCB`  | `<priority> <target> <params>`: `1 . alpn="h2,h3"`                  |
+| `HTTPS` | `<priority> <target> <params>`: `1 . alpn="h2,h3"`                  |
+| `OPENPGPKEY` | base64 public key                                              |
 
-Validation errors return `422 validation` with per-field detail.
+The full set is exactly: `A, AAAA, ANAME, CAA, CERT, CNAME, CSYNC, HINFO,
+HTTPS, MX, NAPTR, NS, OPENPGPKEY, PTR, SMIMEA, SRV, SSHFP, SVCB, TLSA, TXT`.
+The web UI renders structured per-type inputs and assembles them into the `data`
+string. Validation errors return `422 validation` with per-field detail.
 
 ### Settings
 

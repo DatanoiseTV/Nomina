@@ -7,6 +7,12 @@ All notable changes to PicoNS are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Full record-type support** — expanded from 9 to 20 record types: added ANAME,
+  CERT, CSYNC, HINFO, HTTPS, NAPTR, OPENPGPKEY, SMIMEA, SSHFP, SVCB, and TLSA.
+  The record editor now renders **structured per-type fields** (MX preference,
+  SRV weight/port, CAA flags/tag, TLSA/SMIMEA usage/selector/matching, SVCB/HTTPS
+  priority/target/params, etc.) and assembles them into the wire format. Each
+  type is covered by a parser round-trip test.
 - **Request log page** — a paginated, filterable (search/outcome/type), sortable
   view of the persistent query log at `#/queries`, with **per-row quick actions**:
   block a domain (deny rule), allow it (allow rule), or open a prefilled rewrite.

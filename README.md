@@ -43,8 +43,10 @@ ships with a web UI and JSON API.
 - **Single binary** — SQLite is bundled and the web UI is embedded. No runtime
   dependencies, no external services.
 
-Common record types are supported: `A`, `AAAA`, `CNAME`, `MX`, `TXT`, `NS`,
-`SOA`, `SRV`, `PTR`, `CAA`.
+20 record types are supported, with structured per-type fields in the editor:
+`A`, `AAAA`, `ANAME`, `CAA`, `CERT`, `CNAME`, `CSYNC`, `HINFO`, `HTTPS`, `MX`,
+`NAPTR`, `NS`, `OPENPGPKEY`, `PTR`, `SMIMEA`, `SRV`, `SSHFP`, `SVCB`, `TLSA`,
+`TXT` (plus `SOA`, managed via zone settings).
 
 ## Quick start
 
