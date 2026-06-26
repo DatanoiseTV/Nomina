@@ -66,6 +66,9 @@ export async function renderDashboard(root, { registerCleanup }) {
         statCard("Views", fmtInt(status.view_count)),
         statCard("Blocked domains", fmtInt(status.blocked_domains)),
         statCard("Rewrites", fmtInt(status.rewrite_count)),
+        status.conditional_forward_count != null
+          ? statCard("Conditional forwards", fmtInt(status.conditional_forward_count))
+          : null,
         statCard("Uptime", fmtUptime(status.uptime_seconds),
           status.started_at ? `since ${fmtTime(status.started_at)}` : null),
       ]),

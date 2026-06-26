@@ -13,6 +13,7 @@ import { renderAccount } from "./views/account.js";
 import { renderBlocklists } from "./views/blocklists.js";
 import { renderRules } from "./views/rules.js";
 import { renderRewrites } from "./views/rewrites.js";
+import { renderConditional } from "./views/conditional.js";
 
 // ---- Theme -----------------------------------------------------------------
 const THEME_KEY = "picons-theme";
@@ -60,6 +61,7 @@ const routes = [
   { re: /^\/blocklists$/, view: renderBlocklists, nav: "blocklists", title: "Blocklists" },
   { re: /^\/rules$/, view: renderRules, nav: "rules", title: "Rules" },
   { re: /^\/rewrites$/, view: renderRewrites, nav: "rewrites", title: "Rewrites" },
+  { re: /^\/conditional$/, view: renderConditional, nav: "conditional", title: "Conditional forwarding" },
   { re: /^\/settings$/, view: renderSettings, nav: "settings", title: "Settings" },
   { re: /^\/account$/, view: renderAccount, nav: "account", title: "Account" },
 ];
@@ -72,6 +74,8 @@ const NAV_ITEMS = [
   { id: "blocklists", label: "Blocklists", href: "#/blocklists", icon: "shield" },
   { id: "rules", label: "Rules", href: "#/rules", icon: "filter" },
   { id: "rewrites", label: "Rewrites", href: "#/rewrites", icon: "shuffle" },
+  { section: "Forwarding" },
+  { id: "conditional", label: "Conditional", href: "#/conditional", icon: "shuffle" },
   { section: "System" },
   { id: "settings", label: "Settings", href: "#/settings", icon: "settings" },
   { id: "account", label: "Account", href: "#/account", icon: "account" },

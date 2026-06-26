@@ -116,6 +116,8 @@ export const api = {
   updateZone: (id, body) => request("PUT", `/api/zones/${id}`, body),
   deleteZone: (id) => request("DELETE", `/api/zones/${id}`),
   exportZoneUrl: (id) => `/api/zones/${id}/export`,
+  importZone: (id, zonefile, replace) =>
+    request("POST", `/api/zones/${id}/import`, { zonefile, replace: !!replace }),
 
   // ---- Records ----
   createRecord: (zoneId, body) =>
@@ -145,4 +147,10 @@ export const api = {
   createRewrite: (body) => request("POST", "/api/rewrites", body),
   updateRewrite: (id, body) => request("PUT", `/api/rewrites/${id}`, body),
   deleteRewrite: (id) => request("DELETE", `/api/rewrites/${id}`),
+
+  // ---- Conditional forwarding ----
+  listConditionalForwards: () => request("GET", "/api/conditional-forwards"),
+  createConditionalForward: (body) => request("POST", "/api/conditional-forwards", body),
+  updateConditionalForward: (id, body) => request("PUT", `/api/conditional-forwards/${id}`, body),
+  deleteConditionalForward: (id) => request("DELETE", `/api/conditional-forwards/${id}`),
 };

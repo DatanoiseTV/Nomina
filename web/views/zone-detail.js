@@ -42,6 +42,10 @@ export async function renderZoneDetail(root, { params, navigate }) {
     title: "Open the RFC 1035 zone file",
   }, [icon("download", 16), "Export zone file"]);
 
+  const importBtn = h("button.btn.btn-sm", { type: "button", title: "Import a BIND zone file" },
+    [icon("upload", 16), "Import zone file"]);
+  importBtn.addEventListener("click", () => openImportDialog({ zone, onSaved: reload }));
+
   const addRec = h("button.btn.btn-primary", [icon("plus", 16), "Add record"]);
   addRec.addEventListener("click", () =>
     openRecordDialog({ zone, views, onSaved: reload }));
@@ -55,6 +59,7 @@ export async function renderZoneDetail(root, { params, navigate }) {
         ]),
       ]),
       h("div.spacer"),
+      importBtn,
       exportLink,
     ]),
 
@@ -284,6 +289,58 @@ function openRecordDialog({ zone, views, record, onSaved }) {
               await api.createRecord(zone.id, body);
               toast("Record added.", "success");
             }
+            onSaved();
+          } catch (err) {
+            if (err.status === 422 && applyFieldErrors(form, err)) return false;
+            toastError(err);
+            return false;
+          }
+        },
+      },
+    ],
+  });
+}
+
+// ---- Zone import dialog ----------------------------------------------------
+function openImportDialog({ zone, onSaved }) {
+  const zonefile = h("textarea", {
+    name: "zonefile",
+    rows: 16,
+    spellcheck: "false",
+    placeholder: "$ORIGIN home.lan.\n$TTL 300\n@   IN  A   10.0.0.1\nnas IN  A   10.0.0.5",
+    style: "font-family:var(--font-mono);width:100%",
+    required: true,
+  });
+  const replace = h("input", { type: "checkbox", name: "replace" });
+
+  const form = h("form", [
+    h("div.field", [
+      h("label", "Zone file"),
+      zonefile,
+      h("div.hint", "Paste a BIND-style master file. SOA and unsupported record types are skipped; records are added to the all-views set."),
+    ]),
+    h("div.field", [
+      h("label.switch", [replace, h("span.track"), h("span", "Replace existing records")]),
+      h("div.hint", "Clears this zone's existing records before importing."),
+    ]),
+  ]);
+
+  openDialog({
+    title: `Import into ${zone.name}`,
+    body: form,
+    width: "640px",
+    actions: [
+      { label: "Cancel" },
+      {
+        label: "Import",
+        kind: "primary",
+        onClick: async () => {
+          form.querySelectorAll(".invalid").forEach((x) => x.classList.remove("invalid"));
+          form.querySelectorAll(".err").forEach((x) => x.remove());
+          if (!zonefile.value.trim()) { zonefile.classList.add("invalid"); return false; }
+          try {
+            const res = await api.importZone(zone.id, zonefile.value, replace.checked);
+            toast(`Imported ${res.imported} records (${res.skipped} skipped).`, "success");
             onSaved();
           } catch (err) {
             if (err.status === 422 && applyFieldErrors(form, err)) return false;
