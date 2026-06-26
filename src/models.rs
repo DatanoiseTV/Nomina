@@ -89,6 +89,7 @@ pub struct SecondaryZone {
     pub record_count: i64,
     pub last_check: Option<String>,
     pub last_error: Option<String>,
+    pub tsig_key: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -191,6 +192,15 @@ impl Default for QueryLog {
     }
 }
 
+/// A TSIG key (RFC 8945) for authenticating zone transfers. `secret` is the
+/// base64-encoded HMAC key; `algorithm` is e.g. `hmac-sha256`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TsigKey {
+    pub name: String,
+    pub algorithm: String,
+    pub secret: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     /// Upstream resolvers used when `resolution_mode` is `forward`.
@@ -216,6 +226,12 @@ pub struct Settings {
     /// secondary nameservers). Empty disables zone transfers.
     #[serde(default)]
     pub allow_axfr_from: Vec<String>,
+    /// TSIG keys for authenticating zone transfers.
+    #[serde(default)]
+    pub tsig_keys: Vec<TsigKey>,
+    /// Require a valid TSIG signature on incoming AXFR requests.
+    #[serde(default)]
+    pub axfr_require_tsig: bool,
 }
 
 fn default_true() -> bool {
@@ -248,6 +264,8 @@ impl Default for Settings {
             cache_max_ttl: 86400,
             dnssec_validate_upstream: false,
             allow_axfr_from: Vec::new(),
+            tsig_keys: Vec::new(),
+            axfr_require_tsig: false,
         }
     }
 }

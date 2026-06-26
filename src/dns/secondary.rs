@@ -31,9 +31,11 @@ pub async fn transfer(
     zone_id: i64,
     zone_name: &str,
     primary: SocketAddr,
+    tsig_key: Option<&str>,
 ) -> anyhow::Result<usize> {
     let origin = Name::from_utf8(format!("{zone_name}."))?;
-    let records = axfr::axfr_transfer(primary, &origin).await?;
+    let signer = tsig_key.and_then(|n| state.tsig_signer(n));
+    let records = axfr::axfr_transfer(primary, &origin, signer.as_ref()).await?;
 
     let zone_lc = zone_name.trim_end_matches('.').to_ascii_lowercase();
     let mut soa_model: Option<Soa> = None;
@@ -121,11 +123,14 @@ pub async fn poll_loop(state: SharedState) {
                 Ok(n) => n,
                 Err(_) => continue,
             };
+            let signer = sec.tsig_key.as_deref().and_then(|n| state.tsig_signer(n));
 
-            match axfr::soa_serial(primary, &origin).await {
+            match axfr::soa_serial(primary, &origin, signer.as_ref()).await {
                 Ok(remote_serial) => {
                     if remote_serial != sec.serial {
-                        match transfer(&state, sec.zone_id, &sec.name, primary).await {
+                        match transfer(&state, sec.zone_id, &sec.name, primary, sec.tsig_key.as_deref())
+                            .await
+                        {
                             Ok(n) => tracing::info!(
                                 zone = %sec.name,
                                 serial = remote_serial,

@@ -118,6 +118,29 @@ impl DnsHandler {
             tracing::warn!(%client, %qname, "denied AXFR (not allow-listed)");
             return self.send_code(request, req_meta, response_handle, ResponseCode::Refused).await;
         }
+        // TSIG: verify the request signature against configured keys; require it
+        // when configured.
+        if self.state.axfr_require_tsig() {
+            let keys = self.state.tsig_keys();
+            let ok = match request.signature.as_deref() {
+                Some(sig) => match crate::dns::tsig::verify_request(&keys, request.as_slice(), sig) {
+                    Ok(name) => {
+                        tracing::debug!(%client, key = %name, "AXFR TSIG verified");
+                        true
+                    }
+                    Err(e) => {
+                        tracing::warn!(%client, "AXFR TSIG verification failed: {e}");
+                        false
+                    }
+                },
+                None => false,
+            };
+            if !ok {
+                return self
+                    .send_code(request, req_meta, response_handle, ResponseCode::Refused)
+                    .await;
+            }
+        }
 
         match self.state.store().axfr(qname, client) {
             Some(records) => {

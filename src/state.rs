@@ -99,6 +99,24 @@ impl AppState {
         self.settings.read().query_log
     }
 
+    pub fn axfr_require_tsig(&self) -> bool {
+        self.settings.read().axfr_require_tsig
+    }
+
+    pub fn tsig_keys(&self) -> Vec<crate::models::TsigKey> {
+        self.settings.read().tsig_keys.clone()
+    }
+
+    /// Build a TSIG signer for a configured key name, if present and valid.
+    pub fn tsig_signer(&self, key_name: &str) -> Option<hickory_proto::rr::TSigner> {
+        let settings = self.settings.read();
+        settings
+            .tsig_keys
+            .iter()
+            .find(|k| k.name == key_name)
+            .and_then(|k| crate::dns::tsig::build_signer(k).ok())
+    }
+
     /// Is `ip` allowed to request an AXFR zone transfer?
     pub fn axfr_allowed(&self, ip: std::net::IpAddr) -> bool {
         self.settings

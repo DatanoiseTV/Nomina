@@ -132,9 +132,13 @@ CREATE TABLE IF NOT EXISTS secondary_zones (
     refresh_secs INTEGER NOT NULL DEFAULT 3600,
     last_check   TEXT,
     last_error   TEXT,
+    tsig_key     TEXT,
     created_at   TEXT NOT NULL
 );
 "#;
+
+/// Idempotent column additions for databases created by older versions.
+const MIGRATIONS: &[&str] = &["ALTER TABLE secondary_zones ADD COLUMN tsig_key TEXT"];
 
 #[derive(Clone)]
 pub struct Db {
@@ -186,6 +190,10 @@ impl Db {
         }
         let conn = Connection::open(path)?;
         conn.execute_batch(SCHEMA)?;
+        for m in MIGRATIONS {
+            // Ignore "duplicate column" errors when the column already exists.
+            let _ = conn.execute(m, []);
+        }
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -1068,7 +1076,7 @@ impl Db {
         let mut stmt = conn.prepare(
             "SELECT s.zone_id, z.name, s.primary_addr, s.refresh_secs, z.serial,
                     (SELECT COUNT(*) FROM records r WHERE r.zone_id = z.id) AS rc,
-                    s.last_check, s.last_error
+                    s.last_check, s.last_error, s.tsig_key
              FROM secondary_zones s JOIN zones z ON z.id = s.zone_id
              ORDER BY z.name ASC",
         )?;
@@ -1083,10 +1091,22 @@ impl Db {
                     record_count: r.get(5)?,
                     last_check: r.get(6)?,
                     last_error: r.get(7)?,
+                    tsig_key: r.get(8)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
+    }
+
+    pub fn secondary(conn: &Connection, zone_id: i64) -> rusqlite::Result<Option<String>> {
+        let row: Option<Option<String>> = conn
+            .query_row(
+                "SELECT tsig_key FROM secondary_zones WHERE zone_id = ?1",
+                params![zone_id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?;
+        Ok(row.flatten())
     }
 
     pub fn create_secondary(
@@ -1094,11 +1114,12 @@ impl Db {
         zone_id: i64,
         primary_addr: &str,
         refresh_secs: i64,
+        tsig_key: Option<&str>,
     ) -> rusqlite::Result<()> {
         conn.execute(
-            "INSERT INTO secondary_zones (zone_id, primary_addr, refresh_secs, created_at)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![zone_id, primary_addr, refresh_secs, now()],
+            "INSERT INTO secondary_zones (zone_id, primary_addr, refresh_secs, tsig_key, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![zone_id, primary_addr, refresh_secs, tsig_key, now()],
         )?;
         Ok(())
     }

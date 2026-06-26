@@ -567,6 +567,8 @@ pub async fn export_zone(
 pub struct SecondaryCreate {
     name: String,
     primary: String,
+    #[serde(default)]
+    tsig_key: Option<String>,
 }
 
 pub async fn list_secondaries(State(state): State<SharedState>, _auth: Authed) -> ApiResult<Response> {
@@ -587,17 +589,20 @@ pub async fn create_secondary(
     let soa = Soa::default_for(&name);
     let name_db = name.clone();
     let primary_str = primary.to_string();
+    let tsig = req.tsig_key.clone();
     let zone_id = state
         .db
         .run(move |c| {
             let id = Db::create_zone(c, &name_db, &soa, 300)?;
-            Db::create_secondary(c, id, &primary_str, 3600)?;
+            Db::create_secondary(c, id, &primary_str, 3600, tsig.as_deref())?;
             Ok(id)
         })
         .await?;
 
     // Initial transfer.
-    match crate::dns::secondary::transfer(&state, zone_id, &name, primary).await {
+    match crate::dns::secondary::transfer(&state, zone_id, &name, primary, req.tsig_key.as_deref())
+        .await
+    {
         Ok(_) => {}
         Err(e) => {
             let msg = e.to_string();
@@ -628,8 +633,9 @@ pub async fn refresh_secondary(
         .ok_or_else(|| AppError::conflict("not a secondary zone"))?;
     let primary = crate::dns::secondary::parse_primary(&primary)
         .map_err(|e| AppError::internal(e.to_string()))?;
+    let tsig_key = state.db.run(move |c| Db::secondary(c, id)).await?;
 
-    crate::dns::secondary::transfer(&state, id, &zone.name, primary)
+    crate::dns::secondary::transfer(&state, id, &zone.name, primary, tsig_key.as_deref())
         .await
         .map_err(|e| {
             AppError::new(StatusCode::BAD_GATEWAY, "transfer_failed", e.to_string())
@@ -934,6 +940,8 @@ pub struct SettingsUpdate {
     cache_max_ttl: Option<u32>,
     dnssec_validate_upstream: Option<bool>,
     allow_axfr_from: Option<Vec<String>>,
+    tsig_keys: Option<Vec<TsigKey>>,
+    axfr_require_tsig: Option<bool>,
 }
 
 pub async fn get_settings(State(state): State<SharedState>, _auth: Authed) -> ApiResult<Response> {
@@ -993,6 +1001,16 @@ pub async fn put_settings(
                 .map_err(|_| validation_field("allow_axfr_from", &format!("invalid CIDR: {cidr}")))?;
         }
         settings.allow_axfr_from = v;
+    }
+    if let Some(keys) = req.tsig_keys {
+        for k in &keys {
+            crate::dns::tsig::build_signer(k)
+                .map_err(|e| validation_field("tsig_keys", &e.to_string()))?;
+        }
+        settings.tsig_keys = keys;
+    }
+    if let Some(v) = req.axfr_require_tsig {
+        settings.axfr_require_tsig = v;
     }
 
     let to_store = settings.clone();

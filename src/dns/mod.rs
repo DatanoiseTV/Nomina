@@ -9,4 +9,5 @@ pub mod handler;
 pub mod resolve;
 pub mod secondary;
 pub mod server;
+pub mod tsig;
 pub mod upstream;

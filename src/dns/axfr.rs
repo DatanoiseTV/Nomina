@@ -6,9 +6,21 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use hickory_proto::op::{Message, MessageType, OpCode, Query};
+use hickory_proto::rr::TSigner;
 use hickory_proto::rr::{Name, RData, Record, RecordType};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket};
+
+use crate::dns::tsig::now_secs;
+
+/// Encode a query, TSIG-signing it first if a signer is provided.
+fn encode(mut msg: Message, signer: Option<&TSigner>) -> anyhow::Result<Vec<u8>> {
+    if let Some(s) = signer {
+        msg.finalize(s, now_secs())
+            .map_err(|e| anyhow::anyhow!("TSIG sign: {e}"))?;
+    }
+    Ok(msg.to_vec()?)
+}
 
 const TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_RECORDS: usize = 2_000_000;
@@ -18,10 +30,14 @@ fn bind_addr(primary: SocketAddr) -> &'static str {
 }
 
 /// Query the primary for the zone's SOA serial (UDP).
-pub async fn soa_serial(primary: SocketAddr, zone: &Name) -> anyhow::Result<u32> {
+pub async fn soa_serial(
+    primary: SocketAddr,
+    zone: &Name,
+    signer: Option<&TSigner>,
+) -> anyhow::Result<u32> {
     let mut msg = Message::new(rand::random(), MessageType::Query, OpCode::Query);
     msg.add_query(Query::query(zone.clone(), RecordType::SOA));
-    let buf = msg.to_vec()?;
+    let buf = encode(msg, signer)?;
 
     let sock = UdpSocket::bind(bind_addr(primary)).await?;
     sock.connect(primary).await?;
@@ -39,10 +55,14 @@ pub async fn soa_serial(primary: SocketAddr, zone: &Name) -> anyhow::Result<u32>
 
 /// Perform a full AXFR transfer of `zone` from `primary` over TCP and return all
 /// records (including the bracketing SOAs).
-pub async fn axfr_transfer(primary: SocketAddr, zone: &Name) -> anyhow::Result<Vec<Record>> {
+pub async fn axfr_transfer(
+    primary: SocketAddr,
+    zone: &Name,
+    signer: Option<&TSigner>,
+) -> anyhow::Result<Vec<Record>> {
     let mut msg = Message::new(rand::random(), MessageType::Query, OpCode::Query);
     msg.add_query(Query::query(zone.clone(), RecordType::AXFR));
-    let buf = msg.to_vec()?;
+    let buf = encode(msg, signer)?;
 
     let mut stream = tokio::time::timeout(TIMEOUT, TcpStream::connect(primary)).await??;
     stream.write_u16(buf.len() as u16).await?;
