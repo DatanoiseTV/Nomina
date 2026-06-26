@@ -956,6 +956,7 @@ pub struct SettingsUpdate {
     block_mode: Option<BlockMode>,
     blocking_enabled: Option<bool>,
     query_log: Option<QueryLog>,
+    homograph_protection: Option<HomographMode>,
     cache_size: Option<u64>,
     cache_min_ttl: Option<u32>,
     cache_max_ttl: Option<u32>,
@@ -1003,6 +1004,9 @@ pub async fn put_settings(
     }
     if let Some(v) = req.query_log {
         settings.query_log = v;
+    }
+    if let Some(v) = req.homograph_protection {
+        settings.homograph_protection = v;
     }
     if let Some(v) = req.cache_size {
         settings.cache_size = v;

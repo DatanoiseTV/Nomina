@@ -201,7 +201,16 @@ async fn resolve_external(
                 QueryOutcome::Blocked,
             );
         }
-        Decision::Allow | Decision::Pass => {}
+        // An explicit allow rule exempts the name from homograph filtering too.
+        Decision::Allow => {}
+        Decision::Pass => {
+            if crate::dns::homograph::is_suspicious(&key, state.homograph_mode()) {
+                return (
+                    block_answer(state.block_mode(), qname, qtype, recursion_available),
+                    QueryOutcome::Blocked,
+                );
+            }
+        }
     }
 
     // Conditional forwarding: a per-domain upstream takes precedence over the

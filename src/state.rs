@@ -99,6 +99,10 @@ impl AppState {
         self.settings.read().query_log
     }
 
+    pub fn homograph_mode(&self) -> crate::models::HomographMode {
+        self.settings.read().homograph_protection
+    }
+
     pub fn axfr_require_tsig(&self) -> bool {
         self.settings.read().axfr_require_tsig
     }

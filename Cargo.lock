@@ -1523,6 +1523,7 @@ dependencies = [
  "hickory-server",
  "hyper",
  "hyper-util",
+ "idna",
  "ipnet",
  "libc",
  "nix",
@@ -1549,6 +1550,7 @@ dependencies = [
  "tower-service",
  "tracing",
  "tracing-subscriber",
+ "unicode-script",
 ]
 
 [[package]]
@@ -1994,7 +1996,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2650,6 +2652,12 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
+
+[[package]]
+name = "unicode-script"
+version = "0.5.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "383ad40bb927465ec0ce7720e033cb4ca06912855fc35db31b5755d0de75b1ee"
 
 [[package]]
 name = "untrusted"

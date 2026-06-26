@@ -22,6 +22,7 @@ hickory-resolver = { version = "0.26", features = ["tokio", "system-config", "tl
 hickory-server = { version = "0.26", features = ["tls-ring", "https-ring", "quic-ring", "h3-ring"] }
 hyper = { version = "1", features = ["server", "http1", "http2"] }
 hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto"] }
+idna = "1"
 ipnet = { version = "2", features = ["serde"] }
 libc = "0.2"
 nix = { version = "0.29", default-features = false, features = ["user"] }
@@ -47,6 +48,7 @@ tower-http = { version = "0.6", features = ["set-header", "trace", "compression-
 tower-service = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+unicode-script = "0.5"
 
 # Release profile: optimize for size + speed, but keep unwinding panics.
 # PicoNS parses untrusted DNS bytes via hickory; `panic = "abort"` would let a

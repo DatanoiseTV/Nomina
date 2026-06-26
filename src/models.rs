@@ -173,6 +173,27 @@ impl Default for BlockMode {
     }
 }
 
+/// Protection against IDN homograph / lookalike domains (e.g. a Cyrillic «а» in
+/// `аpple.com`, served on the wire as a `xn--` punycode label).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HomographMode {
+    /// No IDN filtering.
+    Off,
+    /// Block internationalized names whose labels mix scripts (e.g. Latin +
+    /// Cyrillic) — the classic homograph attack. Legitimate single-script IDNs
+    /// (e.g. `münchen`) are allowed.
+    Mixed,
+    /// Block all internationalized (punycode) names.
+    AllIdn,
+}
+
+impl Default for HomographMode {
+    fn default() -> Self {
+        HomographMode::Off
+    }
+}
+
 /// How much per-query detail to retain for the dashboard. Privacy-aware: `off`
 /// keeps only aggregate, non-identifying counters (the default).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -218,6 +239,9 @@ pub struct Settings {
     /// Privacy-aware query logging level for the dashboard.
     #[serde(default)]
     pub query_log: QueryLog,
+    /// IDN homograph / lookalike-domain protection.
+    #[serde(default)]
+    pub homograph_protection: HomographMode,
     pub cache_size: u64,
     pub cache_min_ttl: u32,
     pub cache_max_ttl: u32,
@@ -260,6 +284,7 @@ impl Default for Settings {
             block_mode: BlockMode::NxDomain,
             blocking_enabled: true,
             query_log: QueryLog::Off,
+            homograph_protection: HomographMode::Off,
             cache_size: 1024,
             cache_min_ttl: 0,
             cache_max_ttl: 86400,
