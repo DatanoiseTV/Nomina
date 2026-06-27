@@ -1,4 +1,4 @@
-//! SQLite persistence layer.
+//! SQLite persistence layer (Diesel ORM).
 //!
 //! The DNS hot path never touches this — it reads the in-memory [`crate::store`].
 //! The database is the source of truth, mutated by the admin API and reloaded
@@ -7,183 +7,27 @@
 
 use std::sync::Arc;
 
+use diesel::connection::SimpleConnection;
+use diesel::prelude::*;
+use diesel::result::QueryResult;
+use diesel::sql_types::{BigInt, Nullable, Text};
+use diesel::sqlite::{Sqlite, SqliteConnection};
+use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 use parking_lot::Mutex;
-use rusqlite::{Connection, OptionalExtension, params};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 use crate::error::AppError;
 use crate::models::*;
+use crate::schema::*;
 use crate::stats::RecentQuery;
 
-const SCHEMA: &str = r#"
-PRAGMA journal_mode = WAL;
-PRAGMA foreign_keys = ON;
-
-CREATE TABLE IF NOT EXISTS users (
-    id                   INTEGER PRIMARY KEY,
-    username             TEXT NOT NULL UNIQUE,
-    password_hash        TEXT NOT NULL,
-    must_change_password INTEGER NOT NULL DEFAULT 0,
-    created_at           TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS sessions (
-    id          TEXT PRIMARY KEY,
-    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    csrf_token  TEXT NOT NULL,
-    created_at  TEXT NOT NULL,
-    expires_at  TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS views (
-    id           INTEGER PRIMARY KEY,
-    name         TEXT NOT NULL UNIQUE,
-    networks     TEXT NOT NULL,
-    priority     INTEGER NOT NULL DEFAULT 100,
-    is_default   INTEGER NOT NULL DEFAULT 0,
-    created_at   TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS zones (
-    id           INTEGER PRIMARY KEY,
-    name         TEXT NOT NULL UNIQUE,
-    enabled      INTEGER NOT NULL DEFAULT 1,
-    soa          TEXT NOT NULL,
-    default_ttl  INTEGER NOT NULL DEFAULT 300,
-    serial       INTEGER NOT NULL DEFAULT 1,
-    created_at   TEXT NOT NULL,
-    updated_at   TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS records (
-    id          INTEGER PRIMARY KEY,
-    zone_id     INTEGER NOT NULL REFERENCES zones(id) ON DELETE CASCADE,
-    view_id     INTEGER REFERENCES views(id) ON DELETE CASCADE,
-    name        TEXT NOT NULL,
-    rtype       TEXT NOT NULL,
-    ttl         INTEGER,
-    data        TEXT NOT NULL,
-    enabled     INTEGER NOT NULL DEFAULT 1,
-    created_at  TEXT NOT NULL,
-    updated_at  TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_records_zone ON records(zone_id);
-
-CREATE TABLE IF NOT EXISTS settings (
-    id    INTEGER PRIMARY KEY CHECK (id = 1),
-    json  TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS blocklists (
-    id           INTEGER PRIMARY KEY,
-    name         TEXT NOT NULL,
-    url          TEXT NOT NULL UNIQUE,
-    format       TEXT NOT NULL DEFAULT 'hosts',
-    enabled      INTEGER NOT NULL DEFAULT 1,
-    last_updated TEXT,
-    last_error   TEXT,
-    created_at   TEXT NOT NULL
-);
-
--- Local cache of downloaded blocklist domains so we don't re-fetch on restart.
-CREATE TABLE IF NOT EXISTS blocklist_entries (
-    blocklist_id INTEGER NOT NULL REFERENCES blocklists(id) ON DELETE CASCADE,
-    domain       TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_ble_list ON blocklist_entries(blocklist_id);
-
-CREATE TABLE IF NOT EXISTS block_rules (
-    id         INTEGER PRIMARY KEY,
-    domain     TEXT NOT NULL,
-    action     TEXT NOT NULL,
-    comment    TEXT,
-    created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS rewrites (
-    id         INTEGER PRIMARY KEY,
-    domain     TEXT NOT NULL,
-    target     TEXT NOT NULL,
-    enabled    INTEGER NOT NULL DEFAULT 1,
-    comment    TEXT,
-    created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS conditional_forwards (
-    id         INTEGER PRIMARY KEY,
-    domain     TEXT NOT NULL UNIQUE,
-    forwarders TEXT NOT NULL,
-    enabled    INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL
-);
-
--- Persistent query log (written only when query logging is enabled).
-CREATE TABLE IF NOT EXISTS query_log (
-    id      INTEGER PRIMARY KEY,
-    at      TEXT NOT NULL,
-    client  TEXT NOT NULL,
-    view    TEXT,
-    name    TEXT NOT NULL,
-    qtype   TEXT NOT NULL,
-    outcome TEXT NOT NULL,
-    rcode   TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_qlog_id ON query_log(id);
-CREATE INDEX IF NOT EXISTS idx_qlog_name ON query_log(name);
-CREATE INDEX IF NOT EXISTS idx_qlog_outcome ON query_log(outcome);
-
--- Per-zone DNSSEC signing key (base64 PKCS#8 DER). Presence = signed zone.
-CREATE TABLE IF NOT EXISTS dnssec_keys (
-    zone_id    INTEGER PRIMARY KEY REFERENCES zones(id) ON DELETE CASCADE,
-    algorithm  INTEGER NOT NULL,
-    secret     TEXT NOT NULL,
-    nsec3      INTEGER NOT NULL DEFAULT 0,
-    salt       TEXT,
-    iterations INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL
-);
-
--- A zone that is a secondary (replicated from a primary via AXFR).
-CREATE TABLE IF NOT EXISTS secondary_zones (
-    zone_id      INTEGER PRIMARY KEY REFERENCES zones(id) ON DELETE CASCADE,
-    primary_addr TEXT NOT NULL,
-    refresh_secs INTEGER NOT NULL DEFAULT 3600,
-    last_check   TEXT,
-    last_error   TEXT,
-    tsig_key     TEXT,
-    created_at   TEXT NOT NULL
-);
-
--- DynDNS update credentials. Each token authenticates a DynDNS2 client and is
--- scoped to an explicit list of hostnames it may repoint (defence in depth: a
--- leaked token cannot touch records outside its scope).
-CREATE TABLE IF NOT EXISTS dyndns_tokens (
-    id             INTEGER PRIMARY KEY,
-    label          TEXT NOT NULL,
-    username       TEXT NOT NULL UNIQUE,
-    secret_hash    TEXT NOT NULL,
-    hostnames      TEXT NOT NULL,
-    view_id        INTEGER REFERENCES views(id) ON DELETE SET NULL,
-    ttl            INTEGER NOT NULL DEFAULT 60,
-    enabled        INTEGER NOT NULL DEFAULT 1,
-    last_update_at TEXT,
-    last_ip        TEXT,
-    created_at     TEXT NOT NULL
-);
-"#;
-
-/// Idempotent column additions for databases created by older versions.
-const MIGRATIONS: &[&str] = &[
-    "ALTER TABLE secondary_zones ADD COLUMN tsig_key TEXT",
-    "ALTER TABLE dnssec_keys ADD COLUMN nsec3 INTEGER NOT NULL DEFAULT 0",
-    "ALTER TABLE dnssec_keys ADD COLUMN salt TEXT",
-    "ALTER TABLE dnssec_keys ADD COLUMN iterations INTEGER NOT NULL DEFAULT 0",
-];
+/// Migrations embedded into the binary, run on every [`Db::open`].
+pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
 
 #[derive(Clone)]
 pub struct Db {
-    conn: Arc<Mutex<Connection>>,
+    conn: Arc<Mutex<SqliteConnection>>,
 }
 
 /// A DynDNS token row including the secret hash (never serialized to the API).
@@ -242,9 +86,10 @@ fn now() -> String {
         .unwrap_or_default()
 }
 
-/// Map a serde error encountered while (de)serializing a JSON column.
-fn json_err(e: serde_json::Error) -> rusqlite::Error {
-    rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+/// Map a serde error encountered while (de)serializing a JSON column. Internal
+/// only — surfaces as a 500, never a constraint conflict.
+fn json_err(e: serde_json::Error) -> diesel::result::Error {
+    diesel::result::Error::SerializationError(Box::new(e))
 }
 
 /// Parse a stored comma-separated hostname list into normalized FQDNs.
@@ -265,17 +110,187 @@ fn join_hostnames(hostnames: &[String]) -> String {
         .join(",")
 }
 
+// ---------------------------------------------------------------------------
+// Raw rows for the handful of reads kept as `sql_query` (correlated subqueries,
+// joins, dynamic filters) so behaviour stays identical to the hand-written SQL.
+// ---------------------------------------------------------------------------
+
+#[derive(QueryableByName)]
+struct ZoneRaw {
+    #[diesel(sql_type = BigInt)]
+    id: i64,
+    #[diesel(sql_type = Text)]
+    name: String,
+    #[diesel(sql_type = BigInt)]
+    enabled: i64,
+    #[diesel(sql_type = Text)]
+    soa: String,
+    #[diesel(sql_type = BigInt)]
+    default_ttl: i64,
+    #[diesel(sql_type = BigInt)]
+    serial: i64,
+    #[diesel(sql_type = Text)]
+    created_at: String,
+    #[diesel(sql_type = Text)]
+    updated_at: String,
+    #[diesel(sql_type = BigInt)]
+    rc: i64,
+    #[diesel(sql_type = Nullable<Text>)]
+    primary_addr: Option<String>,
+    #[diesel(sql_type = Nullable<Text>)]
+    last_check: Option<String>,
+    #[diesel(sql_type = Nullable<Text>)]
+    last_error: Option<String>,
+    #[diesel(sql_type = BigInt)]
+    dnssec: i64,
+}
+
+impl ZoneRaw {
+    fn into_zone(self) -> QueryResult<Zone> {
+        let soa: Soa = serde_json::from_str(&self.soa).map_err(json_err)?;
+        Ok(Zone {
+            id: self.id,
+            name: self.name,
+            enabled: self.enabled != 0,
+            soa,
+            default_ttl: self.default_ttl as u32,
+            serial: self.serial as u32,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            record_count: self.rc,
+            is_secondary: self.primary_addr.is_some(),
+            primary_addr: self.primary_addr,
+            last_check: self.last_check,
+            last_error: self.last_error,
+            dnssec: self.dnssec != 0,
+        })
+    }
+}
+
+const ZONE_SELECT: &str = "SELECT z.id AS id, z.name AS name, z.enabled AS enabled,
+        z.soa AS soa, z.default_ttl AS default_ttl, z.serial AS serial,
+        z.created_at AS created_at, z.updated_at AS updated_at,
+        (SELECT COUNT(*) FROM records r WHERE r.zone_id = z.id) AS rc,
+        s.primary_addr AS primary_addr, s.last_check AS last_check, s.last_error AS last_error,
+        (SELECT EXISTS(SELECT 1 FROM dnssec_keys d WHERE d.zone_id = z.id)) AS dnssec
+     FROM zones z LEFT JOIN secondary_zones s ON s.zone_id = z.id";
+
+#[derive(QueryableByName)]
+struct BlocklistRaw {
+    #[diesel(sql_type = BigInt)]
+    id: i64,
+    #[diesel(sql_type = Text)]
+    name: String,
+    #[diesel(sql_type = Text)]
+    url: String,
+    #[diesel(sql_type = Text)]
+    format: String,
+    #[diesel(sql_type = BigInt)]
+    enabled: i64,
+    #[diesel(sql_type = Nullable<Text>)]
+    last_updated: Option<String>,
+    #[diesel(sql_type = Nullable<Text>)]
+    last_error: Option<String>,
+    #[diesel(sql_type = Text)]
+    created_at: String,
+    #[diesel(sql_type = BigInt)]
+    cnt: i64,
+}
+
+impl BlocklistRaw {
+    fn into_blocklist(self) -> Blocklist {
+        Blocklist {
+            id: self.id,
+            name: self.name,
+            url: self.url,
+            format: enum_from_str(&self.format).unwrap_or_default(),
+            enabled: self.enabled != 0,
+            last_updated: self.last_updated,
+            last_error: self.last_error,
+            created_at: self.created_at,
+            entry_count: self.cnt,
+        }
+    }
+}
+
+const BLOCKLIST_SELECT: &str = "SELECT b.id AS id, b.name AS name, b.url AS url,
+        b.format AS format, b.enabled AS enabled, b.last_updated AS last_updated,
+        b.last_error AS last_error, b.created_at AS created_at,
+        (SELECT COUNT(*) FROM blocklist_entries e WHERE e.blocklist_id = b.id) AS cnt
+     FROM blocklists b";
+
+#[derive(QueryableByName)]
+struct SecondaryRaw {
+    #[diesel(sql_type = BigInt)]
+    zone_id: i64,
+    #[diesel(sql_type = Text)]
+    name: String,
+    #[diesel(sql_type = Text)]
+    primary_addr: String,
+    #[diesel(sql_type = BigInt)]
+    refresh_secs: i64,
+    #[diesel(sql_type = BigInt)]
+    serial: i64,
+    #[diesel(sql_type = BigInt)]
+    rc: i64,
+    #[diesel(sql_type = Nullable<Text>)]
+    last_check: Option<String>,
+    #[diesel(sql_type = Nullable<Text>)]
+    last_error: Option<String>,
+    #[diesel(sql_type = Nullable<Text>)]
+    tsig_key: Option<String>,
+}
+
+#[derive(QueryableByName)]
+struct DomainRow {
+    #[diesel(sql_type = Text)]
+    domain: String,
+}
+
+#[derive(QueryableByName)]
+struct CountRow {
+    #[diesel(sql_type = BigInt)]
+    n: i64,
+}
+
+#[derive(QueryableByName)]
+struct QlogRow {
+    #[diesel(sql_type = Text)]
+    at: String,
+    #[diesel(sql_type = Text)]
+    client: String,
+    #[diesel(sql_type = Nullable<Text>)]
+    view: Option<String>,
+    #[diesel(sql_type = Text)]
+    name: String,
+    #[diesel(sql_type = Text)]
+    qtype: String,
+    #[diesel(sql_type = Text)]
+    outcome: String,
+    #[diesel(sql_type = Text)]
+    rcode: String,
+}
+
+#[derive(QueryableByName)]
+struct DynRecRow {
+    #[diesel(sql_type = BigInt)]
+    id: i64,
+    #[diesel(sql_type = Nullable<BigInt>)]
+    view_id: Option<i64>,
+    #[diesel(sql_type = Text)]
+    data: String,
+}
+
 impl Db {
     pub fn open(path: &std::path::Path) -> anyhow::Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
-        let conn = Connection::open(path)?;
-        conn.execute_batch(SCHEMA)?;
-        for m in MIGRATIONS {
-            // Ignore "duplicate column" errors when the column already exists.
-            let _ = conn.execute(m, []);
-        }
+        let url = path
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("database path is not valid UTF-8"))?;
+        let mut conn = SqliteConnection::establish(url)?;
+        Self::init(&mut conn)?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -283,32 +298,25 @@ impl Db {
 
     #[cfg(test)]
     pub fn open_in_memory() -> anyhow::Result<Self> {
-        let conn = Connection::open_in_memory()?;
-        conn.execute_batch(SCHEMA)?;
+        let mut conn = SqliteConnection::establish(":memory:")?;
+        Self::init(&mut conn)?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
     }
 
+    /// Set pragmas and run the embedded migrations on a fresh connection.
+    fn init(conn: &mut SqliteConnection) -> anyhow::Result<()> {
+        conn.batch_execute("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")?;
+        conn.run_pending_migrations(MIGRATIONS)
+            .map_err(|e| anyhow::anyhow!("database migration failed: {e}"))?;
+        Ok(())
+    }
+
     /// Run a synchronous database closure on the blocking pool.
     pub async fn run<T, F>(&self, f: F) -> Result<T, AppError>
     where
-        F: FnOnce(&Connection) -> rusqlite::Result<T> + Send + 'static,
-        T: Send + 'static,
-    {
-        let conn = self.conn.clone();
-        tokio::task::spawn_blocking(move || {
-            let guard = conn.lock();
-            f(&guard)
-        })
-        .await?
-        .map_err(Into::into)
-    }
-
-    /// Like [`Db::run`] but provides a mutable connection (for transactions).
-    pub async fn run_mut<T, F>(&self, f: F) -> Result<T, AppError>
-    where
-        F: FnOnce(&mut Connection) -> rusqlite::Result<T> + Send + 'static,
+        F: FnOnce(&mut SqliteConnection) -> QueryResult<T> + Send + 'static,
         T: Send + 'static,
     {
         let conn = self.conn.clone();
@@ -320,509 +328,663 @@ impl Db {
         .map_err(Into::into)
     }
 
+    /// Like [`Db::run`]. Retained for call sites that need transactions; Diesel
+    /// hands out `&mut SqliteConnection` to both.
+    pub async fn run_mut<T, F>(&self, f: F) -> Result<T, AppError>
+    where
+        F: FnOnce(&mut SqliteConnection) -> QueryResult<T> + Send + 'static,
+        T: Send + 'static,
+    {
+        self.run(f).await
+    }
+
     /// Synchronous access for startup paths (store load, bootstrap).
-    pub fn with<T>(&self, f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> rusqlite::Result<T> {
-        let guard = self.conn.lock();
-        f(&guard)
+    pub fn with<T>(
+        &self,
+        f: impl FnOnce(&mut SqliteConnection) -> QueryResult<T>,
+    ) -> QueryResult<T> {
+        let mut guard = self.conn.lock();
+        f(&mut guard)
     }
 
     // ----- users -----------------------------------------------------------
 
-    pub fn user_count(conn: &Connection) -> rusqlite::Result<i64> {
-        conn.query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))
+    pub fn user_count(conn: &mut SqliteConnection) -> QueryResult<i64> {
+        users::table.count().get_result(conn)
     }
 
     pub fn create_user(
-        conn: &Connection,
+        conn: &mut SqliteConnection,
         username: &str,
         password_hash: &str,
         must_change: bool,
-    ) -> rusqlite::Result<i64> {
-        conn.execute(
-            "INSERT INTO users (username, password_hash, must_change_password, created_at)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![username, password_hash, must_change as i64, now()],
-        )?;
-        Ok(conn.last_insert_rowid())
+    ) -> QueryResult<i64> {
+        diesel::insert_into(users::table)
+            .values((
+                users::username.eq(username),
+                users::password_hash.eq(password_hash),
+                users::must_change_password.eq(must_change),
+                users::created_at.eq(now()),
+            ))
+            .returning(users::id)
+            .get_result(conn)
     }
 
-    pub fn user_by_username(conn: &Connection, username: &str) -> rusqlite::Result<Option<UserRow>> {
-        conn.query_row(
-            "SELECT id, username, password_hash, must_change_password, created_at
-             FROM users WHERE username = ?1",
-            params![username],
-            Self::map_user,
-        )
-        .optional()
+    pub fn user_by_username(
+        conn: &mut SqliteConnection,
+        username: &str,
+    ) -> QueryResult<Option<UserRow>> {
+        users::table
+            .filter(users::username.eq(username))
+            .select((
+                users::id,
+                users::username,
+                users::password_hash,
+                users::must_change_password,
+                users::created_at,
+            ))
+            .first::<(i64, String, String, bool, String)>(conn)
+            .optional()
+            .map(|o| o.map(Self::user_from))
     }
 
-    pub fn user_by_id(conn: &Connection, id: i64) -> rusqlite::Result<Option<UserRow>> {
-        conn.query_row(
-            "SELECT id, username, password_hash, must_change_password, created_at
-             FROM users WHERE id = ?1",
-            params![id],
-            Self::map_user,
-        )
-        .optional()
+    pub fn user_by_id(conn: &mut SqliteConnection, id: i64) -> QueryResult<Option<UserRow>> {
+        users::table
+            .filter(users::id.eq(id))
+            .select((
+                users::id,
+                users::username,
+                users::password_hash,
+                users::must_change_password,
+                users::created_at,
+            ))
+            .first::<(i64, String, String, bool, String)>(conn)
+            .optional()
+            .map(|o| o.map(Self::user_from))
     }
 
-    pub fn set_password(conn: &Connection, id: i64, hash: &str) -> rusqlite::Result<()> {
-        conn.execute(
-            "UPDATE users SET password_hash = ?1, must_change_password = 0 WHERE id = ?2",
-            params![hash, id],
-        )?;
-        Ok(())
+    pub fn set_password(conn: &mut SqliteConnection, id: i64, hash: &str) -> QueryResult<()> {
+        diesel::update(users::table.filter(users::id.eq(id)))
+            .set((
+                users::password_hash.eq(hash),
+                users::must_change_password.eq(false),
+            ))
+            .execute(conn)
+            .map(|_| ())
     }
 
-    fn map_user(r: &rusqlite::Row) -> rusqlite::Result<UserRow> {
-        Ok(UserRow {
-            id: r.get(0)?,
-            username: r.get(1)?,
-            password_hash: r.get(2)?,
-            must_change_password: r.get::<_, i64>(3)? != 0,
-            created_at: r.get(4)?,
-        })
+    fn user_from(t: (i64, String, String, bool, String)) -> UserRow {
+        UserRow {
+            id: t.0,
+            username: t.1,
+            password_hash: t.2,
+            must_change_password: t.3,
+            created_at: t.4,
+        }
     }
 
     // ----- sessions --------------------------------------------------------
 
     pub fn create_session(
-        conn: &Connection,
+        conn: &mut SqliteConnection,
         id: &str,
         user_id: i64,
         csrf: &str,
         expires_at: OffsetDateTime,
-    ) -> rusqlite::Result<()> {
-        conn.execute(
-            "INSERT INTO sessions (id, user_id, csrf_token, created_at, expires_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![
-                id,
-                user_id,
-                csrf,
-                now(),
-                expires_at.format(&Rfc3339).unwrap_or_default()
-            ],
-        )?;
-        Ok(())
+    ) -> QueryResult<()> {
+        diesel::insert_into(sessions::table)
+            .values((
+                sessions::id.eq(id),
+                sessions::user_id.eq(user_id),
+                sessions::csrf_token.eq(csrf),
+                sessions::created_at.eq(now()),
+                sessions::expires_at.eq(expires_at.format(&Rfc3339).unwrap_or_default()),
+            ))
+            .execute(conn)
+            .map(|_| ())
     }
 
-    pub fn session(conn: &Connection, id: &str) -> rusqlite::Result<Option<SessionRow>> {
-        conn.query_row(
-            "SELECT user_id, csrf_token, expires_at FROM sessions WHERE id = ?1",
-            params![id],
-            |r| {
-                let exp: String = r.get(2)?;
-                let expires_at = OffsetDateTime::parse(&exp, &Rfc3339)
-                    .unwrap_or(OffsetDateTime::UNIX_EPOCH);
-                Ok(SessionRow {
-                    user_id: r.get(0)?,
-                    csrf_token: r.get(1)?,
-                    expires_at,
+    pub fn session(conn: &mut SqliteConnection, id: &str) -> QueryResult<Option<SessionRow>> {
+        sessions::table
+            .filter(sessions::id.eq(id))
+            .select((
+                sessions::user_id,
+                sessions::csrf_token,
+                sessions::expires_at,
+            ))
+            .first::<(i64, String, String)>(conn)
+            .optional()
+            .map(|o| {
+                o.map(|(user_id, csrf_token, exp)| {
+                    let expires_at =
+                        OffsetDateTime::parse(&exp, &Rfc3339).unwrap_or(OffsetDateTime::UNIX_EPOCH);
+                    SessionRow {
+                        user_id,
+                        csrf_token,
+                        expires_at,
+                    }
                 })
-            },
-        )
-        .optional()
+            })
     }
 
-    pub fn delete_session(conn: &Connection, id: &str) -> rusqlite::Result<()> {
-        conn.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
-        Ok(())
+    pub fn delete_session(conn: &mut SqliteConnection, id: &str) -> QueryResult<()> {
+        diesel::delete(sessions::table.filter(sessions::id.eq(id)))
+            .execute(conn)
+            .map(|_| ())
     }
 
-    pub fn prune_sessions(conn: &Connection) -> rusqlite::Result<()> {
-        conn.execute(
-            "DELETE FROM sessions WHERE expires_at < ?1",
-            params![now()],
-        )?;
-        Ok(())
+    pub fn prune_sessions(conn: &mut SqliteConnection) -> QueryResult<()> {
+        diesel::delete(sessions::table.filter(sessions::expires_at.lt(now())))
+            .execute(conn)
+            .map(|_| ())
     }
 
     // ----- views -----------------------------------------------------------
 
-    pub fn list_views(conn: &Connection) -> rusqlite::Result<Vec<View>> {
-        let mut stmt = conn.prepare(
-            "SELECT id, name, networks, priority, is_default, created_at
-             FROM views ORDER BY priority ASC, id ASC",
-        )?;
-        let rows = stmt
-            .query_map([], Self::map_view)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
+    pub fn list_views(conn: &mut SqliteConnection) -> QueryResult<Vec<View>> {
+        views::table
+            .select((
+                views::id,
+                views::name,
+                views::networks,
+                views::priority,
+                views::is_default,
+                views::created_at,
+            ))
+            .order(views::priority.asc())
+            .then_order_by(views::id.asc())
+            .load::<(i64, String, String, i64, bool, String)>(conn)?
+            .into_iter()
+            .map(Self::view_from)
+            .collect()
     }
 
-    pub fn view(conn: &Connection, id: i64) -> rusqlite::Result<Option<View>> {
-        conn.query_row(
-            "SELECT id, name, networks, priority, is_default, created_at FROM views WHERE id = ?1",
-            params![id],
-            Self::map_view,
-        )
-        .optional()
+    pub fn view(conn: &mut SqliteConnection, id: i64) -> QueryResult<Option<View>> {
+        views::table
+            .filter(views::id.eq(id))
+            .select((
+                views::id,
+                views::name,
+                views::networks,
+                views::priority,
+                views::is_default,
+                views::created_at,
+            ))
+            .first::<(i64, String, String, i64, bool, String)>(conn)
+            .optional()?
+            .map(Self::view_from)
+            .transpose()
     }
 
     pub fn create_view(
-        conn: &Connection,
+        conn: &mut SqliteConnection,
         name: &str,
         networks: &[String],
         priority: i64,
-    ) -> rusqlite::Result<i64> {
+    ) -> QueryResult<i64> {
         let json = serde_json::to_string(networks).map_err(json_err)?;
-        conn.execute(
-            "INSERT INTO views (name, networks, priority, is_default, created_at)
-             VALUES (?1, ?2, ?3, 0, ?4)",
-            params![name, json, priority, now()],
-        )?;
-        Ok(conn.last_insert_rowid())
+        diesel::insert_into(views::table)
+            .values((
+                views::name.eq(name),
+                views::networks.eq(json),
+                views::priority.eq(priority),
+                views::is_default.eq(false),
+                views::created_at.eq(now()),
+            ))
+            .returning(views::id)
+            .get_result(conn)
     }
 
     pub fn update_view(
-        conn: &Connection,
+        conn: &mut SqliteConnection,
         id: i64,
         name: Option<&str>,
         networks: Option<&[String]>,
         priority: Option<i64>,
-    ) -> rusqlite::Result<()> {
+    ) -> QueryResult<()> {
         if let Some(name) = name {
-            conn.execute("UPDATE views SET name = ?1 WHERE id = ?2", params![name, id])?;
+            diesel::update(views::table.filter(views::id.eq(id)))
+                .set(views::name.eq(name))
+                .execute(conn)?;
         }
         if let Some(nets) = networks {
             let json = serde_json::to_string(nets).map_err(json_err)?;
-            conn.execute("UPDATE views SET networks = ?1 WHERE id = ?2", params![json, id])?;
+            diesel::update(views::table.filter(views::id.eq(id)))
+                .set(views::networks.eq(json))
+                .execute(conn)?;
         }
         if let Some(p) = priority {
-            conn.execute("UPDATE views SET priority = ?1 WHERE id = ?2", params![p, id])?;
+            diesel::update(views::table.filter(views::id.eq(id)))
+                .set(views::priority.eq(p))
+                .execute(conn)?;
         }
         Ok(())
     }
 
-    pub fn delete_view(conn: &Connection, id: i64) -> rusqlite::Result<()> {
-        conn.execute("DELETE FROM views WHERE id = ?1", params![id])?;
-        Ok(())
+    pub fn delete_view(conn: &mut SqliteConnection, id: i64) -> QueryResult<()> {
+        diesel::delete(views::table.filter(views::id.eq(id)))
+            .execute(conn)
+            .map(|_| ())
     }
 
     /// Ensure a default view exists (matches everything; lowest precedence).
-    pub fn ensure_default_view(conn: &Connection) -> rusqlite::Result<()> {
-        let exists: i64 =
-            conn.query_row("SELECT COUNT(*) FROM views WHERE is_default = 1", [], |r| r.get(0))?;
+    pub fn ensure_default_view(conn: &mut SqliteConnection) -> QueryResult<()> {
+        let exists: i64 = views::table
+            .filter(views::is_default.eq(true))
+            .count()
+            .get_result(conn)?;
         if exists == 0 {
             let json = serde_json::to_string(&["0.0.0.0/0", "::/0"]).map_err(json_err)?;
-            conn.execute(
-                "INSERT INTO views (name, networks, priority, is_default, created_at)
-                 VALUES ('default', ?1, 1000, 1, ?2)",
-                params![json, now()],
-            )?;
+            diesel::insert_into(views::table)
+                .values((
+                    views::name.eq("default"),
+                    views::networks.eq(json),
+                    views::priority.eq(1000_i64),
+                    views::is_default.eq(true),
+                    views::created_at.eq(now()),
+                ))
+                .execute(conn)?;
         }
         Ok(())
     }
 
-    fn map_view(r: &rusqlite::Row) -> rusqlite::Result<View> {
-        let nets: String = r.get(2)?;
-        let networks: Vec<String> = serde_json::from_str(&nets).map_err(json_err)?;
+    fn view_from(t: (i64, String, String, i64, bool, String)) -> QueryResult<View> {
+        let networks: Vec<String> = serde_json::from_str(&t.2).map_err(json_err)?;
         Ok(View {
-            id: r.get(0)?,
-            name: r.get(1)?,
+            id: t.0,
+            name: t.1,
             networks,
-            priority: r.get(3)?,
-            is_default: r.get::<_, i64>(4)? != 0,
-            created_at: r.get(5)?,
+            priority: t.3,
+            is_default: t.4,
+            created_at: t.5,
         })
     }
 
     // ----- zones -----------------------------------------------------------
 
-    pub fn list_zones(conn: &Connection) -> rusqlite::Result<Vec<Zone>> {
-        let mut stmt = conn.prepare(
-            "SELECT z.id, z.name, z.enabled, z.soa, z.default_ttl, z.serial,
-                    z.created_at, z.updated_at,
-                    (SELECT COUNT(*) FROM records r WHERE r.zone_id = z.id) AS rc,
-                    s.primary_addr, s.last_check, s.last_error,
-                    (SELECT EXISTS(SELECT 1 FROM dnssec_keys d WHERE d.zone_id = z.id)) AS dnssec
-             FROM zones z LEFT JOIN secondary_zones s ON s.zone_id = z.id
-             ORDER BY z.name ASC",
-        )?;
-        let rows = stmt
-            .query_map([], Self::map_zone)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
+    pub fn list_zones(conn: &mut SqliteConnection) -> QueryResult<Vec<Zone>> {
+        let sql = format!("{ZONE_SELECT} ORDER BY z.name ASC");
+        diesel::sql_query(sql)
+            .load::<ZoneRaw>(conn)?
+            .into_iter()
+            .map(ZoneRaw::into_zone)
+            .collect()
     }
 
-    pub fn zone(conn: &Connection, id: i64) -> rusqlite::Result<Option<Zone>> {
-        conn.query_row(
-            "SELECT z.id, z.name, z.enabled, z.soa, z.default_ttl, z.serial,
-                    z.created_at, z.updated_at,
-                    (SELECT COUNT(*) FROM records r WHERE r.zone_id = z.id) AS rc,
-                    s.primary_addr, s.last_check, s.last_error,
-                    (SELECT EXISTS(SELECT 1 FROM dnssec_keys d WHERE d.zone_id = z.id)) AS dnssec
-             FROM zones z LEFT JOIN secondary_zones s ON s.zone_id = z.id
-             WHERE z.id = ?1",
-            params![id],
-            Self::map_zone,
-        )
-        .optional()
+    pub fn zone(conn: &mut SqliteConnection, id: i64) -> QueryResult<Option<Zone>> {
+        let sql = format!("{ZONE_SELECT} WHERE z.id = ?");
+        diesel::sql_query(sql)
+            .bind::<BigInt, _>(id)
+            .get_result::<ZoneRaw>(conn)
+            .optional()?
+            .map(ZoneRaw::into_zone)
+            .transpose()
     }
 
     pub fn create_zone(
-        conn: &Connection,
+        conn: &mut SqliteConnection,
         name: &str,
         soa: &Soa,
         default_ttl: u32,
-    ) -> rusqlite::Result<i64> {
+    ) -> QueryResult<i64> {
         let soa_json = serde_json::to_string(soa).map_err(json_err)?;
         let ts = now();
-        conn.execute(
-            "INSERT INTO zones (name, enabled, soa, default_ttl, serial, created_at, updated_at)
-             VALUES (?1, 1, ?2, ?3, 1, ?4, ?4)",
-            params![name, soa_json, default_ttl, ts],
-        )?;
-        Ok(conn.last_insert_rowid())
+        diesel::insert_into(zones::table)
+            .values((
+                zones::name.eq(name),
+                zones::enabled.eq(true),
+                zones::soa.eq(soa_json),
+                zones::default_ttl.eq(default_ttl as i64),
+                zones::serial.eq(1_i64),
+                zones::created_at.eq(&ts),
+                zones::updated_at.eq(&ts),
+            ))
+            .returning(zones::id)
+            .get_result(conn)
     }
 
     pub fn update_zone(
-        conn: &Connection,
+        conn: &mut SqliteConnection,
         id: i64,
         enabled: Option<bool>,
         soa: Option<&Soa>,
         default_ttl: Option<u32>,
-    ) -> rusqlite::Result<()> {
+    ) -> QueryResult<()> {
         if let Some(e) = enabled {
-            conn.execute("UPDATE zones SET enabled = ?1 WHERE id = ?2", params![e as i64, id])?;
+            diesel::update(zones::table.filter(zones::id.eq(id)))
+                .set(zones::enabled.eq(e))
+                .execute(conn)?;
         }
         if let Some(soa) = soa {
             let soa_json = serde_json::to_string(soa).map_err(json_err)?;
-            conn.execute("UPDATE zones SET soa = ?1 WHERE id = ?2", params![soa_json, id])?;
+            diesel::update(zones::table.filter(zones::id.eq(id)))
+                .set(zones::soa.eq(soa_json))
+                .execute(conn)?;
         }
         if let Some(ttl) = default_ttl {
-            conn.execute("UPDATE zones SET default_ttl = ?1 WHERE id = ?2", params![ttl, id])?;
+            diesel::update(zones::table.filter(zones::id.eq(id)))
+                .set(zones::default_ttl.eq(ttl as i64))
+                .execute(conn)?;
         }
         Self::bump_serial(conn, id)?;
         Ok(())
     }
 
-    pub fn delete_zone(conn: &Connection, id: i64) -> rusqlite::Result<()> {
-        conn.execute("DELETE FROM zones WHERE id = ?1", params![id])?;
-        Ok(())
+    pub fn delete_zone(conn: &mut SqliteConnection, id: i64) -> QueryResult<()> {
+        diesel::delete(zones::table.filter(zones::id.eq(id)))
+            .execute(conn)
+            .map(|_| ())
     }
 
     /// Increment the zone serial and update the timestamp. Called on any change
     /// to the zone or its records.
-    pub fn bump_serial(conn: &Connection, id: i64) -> rusqlite::Result<()> {
-        conn.execute(
-            "UPDATE zones SET serial = serial + 1, updated_at = ?1 WHERE id = ?2",
-            params![now(), id],
-        )?;
-        Ok(())
-    }
-
-    fn map_zone(r: &rusqlite::Row) -> rusqlite::Result<Zone> {
-        let soa_json: String = r.get(3)?;
-        let soa: Soa = serde_json::from_str(&soa_json).map_err(json_err)?;
-        let primary_addr: Option<String> = r.get(9)?;
-        Ok(Zone {
-            id: r.get(0)?,
-            name: r.get(1)?,
-            enabled: r.get::<_, i64>(2)? != 0,
-            soa,
-            default_ttl: r.get(4)?,
-            serial: r.get(5)?,
-            created_at: r.get(6)?,
-            updated_at: r.get(7)?,
-            record_count: r.get(8)?,
-            is_secondary: primary_addr.is_some(),
-            primary_addr,
-            last_check: r.get(10)?,
-            last_error: r.get(11)?,
-            dnssec: r.get::<_, i64>(12)? != 0,
-        })
+    pub fn bump_serial(conn: &mut SqliteConnection, id: i64) -> QueryResult<()> {
+        diesel::update(zones::table.filter(zones::id.eq(id)))
+            .set((
+                zones::serial.eq(zones::serial + 1),
+                zones::updated_at.eq(now()),
+            ))
+            .execute(conn)
+            .map(|_| ())
     }
 
     // ----- records ---------------------------------------------------------
 
-    pub fn list_records(conn: &Connection, zone_id: i64) -> rusqlite::Result<Vec<DnsRecord>> {
-        let zone_name: String =
-            conn.query_row("SELECT name FROM zones WHERE id = ?1", params![zone_id], |r| r.get(0))?;
-        let mut stmt = conn.prepare(
-            "SELECT id, zone_id, view_id, name, rtype, ttl, data, enabled, created_at, updated_at
-             FROM records WHERE zone_id = ?1 ORDER BY name ASC, rtype ASC",
-        )?;
-        let rows = stmt
-            .query_map(params![zone_id], |r| Self::map_record(r, &zone_name))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
+    pub fn list_records(conn: &mut SqliteConnection, zone_id: i64) -> QueryResult<Vec<DnsRecord>> {
+        let zone_name: String = zones::table
+            .filter(zones::id.eq(zone_id))
+            .select(zones::name)
+            .first(conn)?;
+        let rows = records::table
+            .filter(records::zone_id.eq(zone_id))
+            .select(Self::RECORD_COLS)
+            .order(records::name.asc())
+            .then_order_by(records::rtype.asc())
+            .load::<RecordTuple>(conn)?
+            .into_iter()
+            .map(|t| Self::record_from(t, &zone_name))
+            .collect();
         Ok(rows)
     }
 
-    pub fn record(conn: &Connection, id: i64) -> rusqlite::Result<Option<DnsRecord>> {
-        let row: Option<(i64,)> = conn
-            .query_row("SELECT zone_id FROM records WHERE id = ?1", params![id], |r| {
-                Ok((r.get(0)?,))
-            })
+    pub fn record(conn: &mut SqliteConnection, id: i64) -> QueryResult<Option<DnsRecord>> {
+        let zone_id: Option<i64> = records::table
+            .filter(records::id.eq(id))
+            .select(records::zone_id)
+            .first(conn)
             .optional()?;
-        let Some((zone_id,)) = row else { return Ok(None) };
-        let zone_name: String =
-            conn.query_row("SELECT name FROM zones WHERE id = ?1", params![zone_id], |r| r.get(0))?;
-        conn.query_row(
-            "SELECT id, zone_id, view_id, name, rtype, ttl, data, enabled, created_at, updated_at
-             FROM records WHERE id = ?1",
-            params![id],
-            |r| Self::map_record(r, &zone_name),
-        )
-        .optional()
+        let Some(zone_id) = zone_id else {
+            return Ok(None);
+        };
+        let zone_name: String = zones::table
+            .filter(zones::id.eq(zone_id))
+            .select(zones::name)
+            .first(conn)?;
+        records::table
+            .filter(records::id.eq(id))
+            .select(Self::RECORD_COLS)
+            .first::<RecordTuple>(conn)
+            .optional()
+            .map(|o| o.map(|t| Self::record_from(t, &zone_name)))
     }
 
     #[allow(clippy::too_many_arguments)]
     pub fn create_record(
-        conn: &Connection,
+        conn: &mut SqliteConnection,
         zone_id: i64,
         view_id: Option<i64>,
         name: &str,
         rtype: &str,
         ttl: Option<u32>,
         data: &str,
-    ) -> rusqlite::Result<i64> {
+    ) -> QueryResult<i64> {
         let ts = now();
-        conn.execute(
-            "INSERT INTO records (zone_id, view_id, name, rtype, ttl, data, enabled, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7, ?7)",
-            params![zone_id, view_id, name, rtype, ttl, data, ts],
-        )?;
+        let id = diesel::insert_into(records::table)
+            .values((
+                records::zone_id.eq(zone_id),
+                records::view_id.eq(view_id),
+                records::name.eq(name),
+                records::rtype.eq(rtype),
+                records::ttl.eq(ttl.map(|t| t as i64)),
+                records::data.eq(data),
+                records::enabled.eq(true),
+                records::created_at.eq(&ts),
+                records::updated_at.eq(&ts),
+            ))
+            .returning(records::id)
+            .get_result(conn)?;
         Self::bump_serial(conn, zone_id)?;
-        Ok(conn.last_insert_rowid())
+        Ok(id)
     }
 
     #[allow(clippy::too_many_arguments)]
     pub fn update_record(
-        conn: &Connection,
+        conn: &mut SqliteConnection,
         id: i64,
         view_id: Option<Option<i64>>,
         name: Option<&str>,
         ttl: Option<Option<u32>>,
         data: Option<&str>,
         enabled: Option<bool>,
-    ) -> rusqlite::Result<()> {
+    ) -> QueryResult<()> {
         if let Some(v) = view_id {
-            conn.execute("UPDATE records SET view_id = ?1 WHERE id = ?2", params![v, id])?;
+            diesel::update(records::table.filter(records::id.eq(id)))
+                .set(records::view_id.eq(v))
+                .execute(conn)?;
         }
         if let Some(n) = name {
-            conn.execute("UPDATE records SET name = ?1 WHERE id = ?2", params![n, id])?;
+            diesel::update(records::table.filter(records::id.eq(id)))
+                .set(records::name.eq(n))
+                .execute(conn)?;
         }
         if let Some(t) = ttl {
-            conn.execute("UPDATE records SET ttl = ?1 WHERE id = ?2", params![t, id])?;
+            diesel::update(records::table.filter(records::id.eq(id)))
+                .set(records::ttl.eq(t.map(|v| v as i64)))
+                .execute(conn)?;
         }
         if let Some(d) = data {
-            conn.execute("UPDATE records SET data = ?1 WHERE id = ?2", params![d, id])?;
+            diesel::update(records::table.filter(records::id.eq(id)))
+                .set(records::data.eq(d))
+                .execute(conn)?;
         }
         if let Some(e) = enabled {
-            conn.execute("UPDATE records SET enabled = ?1 WHERE id = ?2", params![e as i64, id])?;
+            diesel::update(records::table.filter(records::id.eq(id)))
+                .set(records::enabled.eq(e))
+                .execute(conn)?;
         }
-        conn.execute("UPDATE records SET updated_at = ?1 WHERE id = ?2", params![now(), id])?;
-        let zone_id: i64 =
-            conn.query_row("SELECT zone_id FROM records WHERE id = ?1", params![id], |r| r.get(0))?;
+        diesel::update(records::table.filter(records::id.eq(id)))
+            .set(records::updated_at.eq(now()))
+            .execute(conn)?;
+        let zone_id: i64 = records::table
+            .filter(records::id.eq(id))
+            .select(records::zone_id)
+            .first(conn)?;
         Self::bump_serial(conn, zone_id)?;
         Ok(())
     }
 
-    pub fn delete_record(conn: &Connection, id: i64) -> rusqlite::Result<Option<i64>> {
-        let zone_id: Option<i64> = conn
-            .query_row("SELECT zone_id FROM records WHERE id = ?1", params![id], |r| r.get(0))
+    pub fn delete_record(conn: &mut SqliteConnection, id: i64) -> QueryResult<Option<i64>> {
+        let zone_id: Option<i64> = records::table
+            .filter(records::id.eq(id))
+            .select(records::zone_id)
+            .first(conn)
             .optional()?;
         if let Some(zid) = zone_id {
-            conn.execute("DELETE FROM records WHERE id = ?1", params![id])?;
+            diesel::delete(records::table.filter(records::id.eq(id))).execute(conn)?;
             Self::bump_serial(conn, zid)?;
         }
         Ok(zone_id)
     }
 
+    /// The column tuple selected for a [`DnsRecord`].
+    const RECORD_COLS: (
+        records::id,
+        records::zone_id,
+        records::view_id,
+        records::name,
+        records::rtype,
+        records::ttl,
+        records::data,
+        records::enabled,
+        records::created_at,
+        records::updated_at,
+    ) = (
+        records::id,
+        records::zone_id,
+        records::view_id,
+        records::name,
+        records::rtype,
+        records::ttl,
+        records::data,
+        records::enabled,
+        records::created_at,
+        records::updated_at,
+    );
+
+    fn record_from(t: RecordTuple, zone_name: &str) -> DnsRecord {
+        let fqdn = record_fqdn_string(&t.3, zone_name);
+        DnsRecord {
+            id: t.0,
+            zone_id: t.1,
+            view_id: t.2,
+            name: t.3,
+            fqdn,
+            rtype: t.4,
+            ttl: t.5.map(|v| v as u32),
+            data: t.6,
+            enabled: t.7,
+            created_at: t.8,
+            updated_at: t.9,
+        }
+    }
+
     // ----- DynDNS tokens ---------------------------------------------------
 
-    pub fn list_dyndns_tokens(conn: &Connection) -> rusqlite::Result<Vec<DynDnsToken>> {
-        let mut stmt = conn.prepare(
-            "SELECT id, label, username, hostnames, view_id, ttl, enabled,
-                    last_update_at, last_ip, created_at
-             FROM dyndns_tokens ORDER BY label ASC",
-        )?;
-        let rows = stmt
-            .query_map([], |r| {
-                let hostnames: String = r.get(3)?;
-                Ok(DynDnsToken {
-                    id: r.get(0)?,
-                    label: r.get(1)?,
-                    username: r.get(2)?,
-                    hostnames: split_hostnames(&hostnames),
-                    view_id: r.get(4)?,
-                    ttl: r.get(5)?,
-                    enabled: r.get::<_, i64>(6)? != 0,
-                    last_update_at: r.get(7)?,
-                    last_ip: r.get(8)?,
-                    created_at: r.get(9)?,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
+    pub fn list_dyndns_tokens(conn: &mut SqliteConnection) -> QueryResult<Vec<DynDnsToken>> {
+        let tokens = dyndns_tokens::table
+            .select((
+                dyndns_tokens::id,
+                dyndns_tokens::label,
+                dyndns_tokens::username,
+                dyndns_tokens::hostnames,
+                dyndns_tokens::view_id,
+                dyndns_tokens::ttl,
+                dyndns_tokens::enabled,
+                dyndns_tokens::last_update_at,
+                dyndns_tokens::last_ip,
+                dyndns_tokens::created_at,
+            ))
+            .order(dyndns_tokens::label.asc())
+            .load::<(
+                i64,
+                String,
+                String,
+                String,
+                Option<i64>,
+                i64,
+                bool,
+                Option<String>,
+                Option<String>,
+                String,
+            )>(conn)?
+            .into_iter()
+            .map(|t| DynDnsToken {
+                id: t.0,
+                label: t.1,
+                username: t.2,
+                hostnames: split_hostnames(&t.3),
+                view_id: t.4,
+                ttl: t.5 as u32,
+                enabled: t.6,
+                last_update_at: t.7,
+                last_ip: t.8,
+                created_at: t.9,
+            })
+            .collect();
+        Ok(tokens)
     }
 
     pub fn create_dyndns_token(
-        conn: &Connection,
+        conn: &mut SqliteConnection,
         label: &str,
         username: &str,
         secret_hash: &str,
         hostnames: &[String],
         view_id: Option<i64>,
         ttl: u32,
-    ) -> rusqlite::Result<i64> {
+    ) -> QueryResult<i64> {
         let hostnames = join_hostnames(hostnames);
-        conn.execute(
-            "INSERT INTO dyndns_tokens
-                (label, username, secret_hash, hostnames, view_id, ttl, enabled, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7)",
-            params![label, username, secret_hash, hostnames, view_id, ttl, now()],
-        )?;
-        Ok(conn.last_insert_rowid())
+        diesel::insert_into(dyndns_tokens::table)
+            .values((
+                dyndns_tokens::label.eq(label),
+                dyndns_tokens::username.eq(username),
+                dyndns_tokens::secret_hash.eq(secret_hash),
+                dyndns_tokens::hostnames.eq(hostnames),
+                dyndns_tokens::view_id.eq(view_id),
+                dyndns_tokens::ttl.eq(ttl as i64),
+                dyndns_tokens::enabled.eq(true),
+                dyndns_tokens::created_at.eq(now()),
+            ))
+            .returning(dyndns_tokens::id)
+            .get_result(conn)
     }
 
-    pub fn delete_dyndns_token(conn: &Connection, id: i64) -> rusqlite::Result<()> {
-        conn.execute("DELETE FROM dyndns_tokens WHERE id = ?1", params![id])?;
-        Ok(())
+    pub fn delete_dyndns_token(conn: &mut SqliteConnection, id: i64) -> QueryResult<()> {
+        diesel::delete(dyndns_tokens::table.filter(dyndns_tokens::id.eq(id)))
+            .execute(conn)
+            .map(|_| ())
     }
 
     /// Look up a DynDNS token by its login username (the Basic-auth user).
-    pub fn dyndns_auth(conn: &Connection, username: &str) -> rusqlite::Result<Option<DynDnsAuthRow>> {
-        conn.query_row(
-            "SELECT id, secret_hash, hostnames, view_id, ttl, enabled
-             FROM dyndns_tokens WHERE username = ?1",
-            params![username],
-            |r| {
-                let hostnames: String = r.get(2)?;
-                Ok(DynDnsAuthRow {
-                    id: r.get(0)?,
-                    secret_hash: r.get(1)?,
-                    hostnames: split_hostnames(&hostnames),
-                    view_id: r.get(3)?,
-                    ttl: r.get(4)?,
-                    enabled: r.get::<_, i64>(5)? != 0,
+    pub fn dyndns_auth(
+        conn: &mut SqliteConnection,
+        username: &str,
+    ) -> QueryResult<Option<DynDnsAuthRow>> {
+        dyndns_tokens::table
+            .filter(dyndns_tokens::username.eq(username))
+            .select((
+                dyndns_tokens::id,
+                dyndns_tokens::secret_hash,
+                dyndns_tokens::hostnames,
+                dyndns_tokens::view_id,
+                dyndns_tokens::ttl,
+                dyndns_tokens::enabled,
+            ))
+            .first::<(i64, String, String, Option<i64>, i64, bool)>(conn)
+            .optional()
+            .map(|o| {
+                o.map(|t| DynDnsAuthRow {
+                    id: t.0,
+                    secret_hash: t.1,
+                    hostnames: split_hostnames(&t.2),
+                    view_id: t.3,
+                    ttl: t.4 as u32,
+                    enabled: t.5,
                 })
-            },
-        )
-        .optional()
+            })
     }
 
     /// Record a successful update against a token (audit / UI display).
-    pub fn touch_dyndns_token(conn: &Connection, id: i64, ip: &str) -> rusqlite::Result<()> {
-        conn.execute(
-            "UPDATE dyndns_tokens SET last_update_at = ?1, last_ip = ?2 WHERE id = ?3",
-            params![now(), ip, id],
-        )?;
-        Ok(())
+    pub fn touch_dyndns_token(conn: &mut SqliteConnection, id: i64, ip: &str) -> QueryResult<()> {
+        diesel::update(dyndns_tokens::table.filter(dyndns_tokens::id.eq(id)))
+            .set((
+                dyndns_tokens::last_update_at.eq(now()),
+                dyndns_tokens::last_ip.eq(ip),
+            ))
+            .execute(conn)
+            .map(|_| ())
     }
 
     /// Upsert the A/AAAA record for `host_fqdn` to `ip` in the given view. Routes
     /// through `create_record`/`update_record`, so the zone serial is bumped on
     /// any change (secondaries/AXFR/DNSSEC see it); `Unchanged` bumps nothing.
     pub fn dyndns_set_address(
-        conn: &Connection,
+        conn: &mut SqliteConnection,
         host_fqdn: &str,
         ip: std::net::IpAddr,
         view_id: Option<i64>,
         ttl: u32,
-    ) -> rusqlite::Result<DynUpdate> {
+    ) -> QueryResult<DynUpdate> {
         let host = host_fqdn.trim().trim_end_matches('.').to_ascii_lowercase();
         // Longest-suffix match against configured zones.
         let zones = Self::list_zones(conn)?;
@@ -830,7 +992,12 @@ impl Db {
         for z in &zones {
             let zn = z.name.trim_end_matches('.').to_ascii_lowercase();
             let matches = host == zn || host.ends_with(&format!(".{zn}"));
-            if matches && best.as_ref().map(|(_, n)| zn.len() > n.len()).unwrap_or(true) {
+            if matches
+                && best
+                    .as_ref()
+                    .map(|(_, n)| zn.len() > n.len())
+                    .unwrap_or(true)
+            {
                 best = Some((z.id, zn));
             }
         }
@@ -845,23 +1012,23 @@ impl Db {
         let rtype = if ip.is_ipv4() { "A" } else { "AAAA" };
         let data = ip.to_string();
 
-        // Find an existing record at this owner/type in the same view.
-        let mut stmt = conn.prepare(
+        // Find an existing record at this owner/type in the same view. Kept as
+        // sql_query to preserve the case-insensitive (COLLATE NOCASE) owner match.
+        let existing = diesel::sql_query(
             "SELECT id, view_id, data FROM records
-             WHERE zone_id = ?1 AND name = ?2 COLLATE NOCASE AND rtype = ?3",
-        )?;
-        let existing = stmt
-            .query_map(params![zone_id, rel, rtype], |r| {
-                Ok((r.get::<_, i64>(0)?, r.get::<_, Option<i64>>(1)?, r.get::<_, String>(2)?))
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?
-            .into_iter()
-            .find(|(_, v, _)| *v == view_id);
+             WHERE zone_id = ? AND name = ? COLLATE NOCASE AND rtype = ?",
+        )
+        .bind::<BigInt, _>(zone_id)
+        .bind::<Text, _>(&rel)
+        .bind::<Text, _>(rtype)
+        .load::<DynRecRow>(conn)?
+        .into_iter()
+        .find(|r| r.view_id == view_id);
 
         match existing {
-            Some((_, _, cur)) if cur == data => Ok(DynUpdate::Unchanged),
-            Some((id, _, _)) => {
-                Self::update_record(conn, id, None, None, None, Some(&data), None)?;
+            Some(r) if r.data == data => Ok(DynUpdate::Unchanged),
+            Some(r) => {
+                Self::update_record(conn, r.id, None, None, None, Some(&data), None)?;
                 Ok(DynUpdate::Updated)
             }
             None => {
@@ -875,86 +1042,106 @@ impl Db {
     /// `records` is `(name, rtype, ttl, data)`. Optionally replaces existing
     /// records first. Returns the number inserted.
     pub fn import_records(
-        conn: &mut Connection,
+        conn: &mut SqliteConnection,
         zone_id: i64,
         replace: bool,
         records: &[(String, String, u32, String)],
-    ) -> rusqlite::Result<usize> {
+    ) -> QueryResult<usize> {
         let ts = now();
-        let tx = conn.transaction()?;
-        if replace {
-            tx.execute("DELETE FROM records WHERE zone_id = ?1", params![zone_id])?;
-        }
-        let mut count = 0;
-        {
-            let mut stmt = tx.prepare(
-                "INSERT INTO records (zone_id, view_id, name, rtype, ttl, data, enabled, created_at, updated_at)
-                 VALUES (?1, NULL, ?2, ?3, ?4, ?5, 1, ?6, ?6)",
-            )?;
+        conn.transaction(|conn| {
+            if replace {
+                diesel::delete(records::table.filter(records::zone_id.eq(zone_id)))
+                    .execute(conn)?;
+            }
+            let mut count = 0;
             for (name, rtype, ttl, data) in records {
-                stmt.execute(params![zone_id, name, rtype, ttl, data, ts])?;
+                diesel::insert_into(records::table)
+                    .values((
+                        records::zone_id.eq(zone_id),
+                        records::view_id.eq(None::<i64>),
+                        records::name.eq(name),
+                        records::rtype.eq(rtype),
+                        records::ttl.eq(*ttl as i64),
+                        records::data.eq(data),
+                        records::enabled.eq(true),
+                        records::created_at.eq(&ts),
+                        records::updated_at.eq(&ts),
+                    ))
+                    .execute(conn)?;
                 count += 1;
             }
-        }
-        tx.execute(
-            "UPDATE zones SET serial = serial + 1, updated_at = ?1 WHERE id = ?2",
-            params![ts, zone_id],
-        )?;
-        tx.commit()?;
-        Ok(count)
-    }
-
-    fn map_record(r: &rusqlite::Row, zone_name: &str) -> rusqlite::Result<DnsRecord> {
-        let name: String = r.get(3)?;
-        let fqdn = record_fqdn_string(&name, zone_name);
-        Ok(DnsRecord {
-            id: r.get(0)?,
-            zone_id: r.get(1)?,
-            view_id: r.get(2)?,
-            name,
-            fqdn,
-            rtype: r.get(4)?,
-            ttl: r.get(5)?,
-            data: r.get(6)?,
-            enabled: r.get::<_, i64>(7)? != 0,
-            created_at: r.get(8)?,
-            updated_at: r.get(9)?,
+            diesel::update(zones::table.filter(zones::id.eq(zone_id)))
+                .set((
+                    zones::serial.eq(zones::serial + 1),
+                    zones::updated_at.eq(&ts),
+                ))
+                .execute(conn)?;
+            Ok(count)
         })
     }
 
     // ----- settings --------------------------------------------------------
 
+    pub fn get_settings(conn: &mut SqliteConnection) -> QueryResult<Settings> {
+        let json: Option<String> = settings::table
+            .filter(settings::id.eq(1_i64))
+            .select(settings::json)
+            .first(conn)
+            .optional()?;
+        match json {
+            Some(j) => serde_json::from_str(&j).map_err(json_err),
+            None => Ok(Settings::default()),
+        }
+    }
+
+    pub fn put_settings(conn: &mut SqliteConnection, settings: &Settings) -> QueryResult<()> {
+        let json = serde_json::to_string(settings).map_err(json_err)?;
+        diesel::insert_into(settings::table)
+            .values((settings::id.eq(1_i64), settings::json.eq(&json)))
+            .on_conflict(settings::id)
+            .do_update()
+            .set(settings::json.eq(&json))
+            .execute(conn)
+            .map(|_| ())
+    }
+
     // ----- query log -------------------------------------------------------
 
     /// Batch-insert query-log entries in one transaction.
-    pub fn insert_queries(conn: &mut Connection, entries: &[RecentQuery]) -> rusqlite::Result<()> {
-        let tx = conn.transaction()?;
-        {
-            let mut stmt = tx.prepare(
-                "INSERT INTO query_log (at, client, view, name, qtype, outcome, rcode)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            )?;
+    pub fn insert_queries(conn: &mut SqliteConnection, entries: &[RecentQuery]) -> QueryResult<()> {
+        conn.transaction(|conn| {
             for e in entries {
-                stmt.execute(params![e.at, e.client, e.view, e.name, e.qtype, e.outcome, e.rcode])?;
+                diesel::insert_into(query_log::table)
+                    .values((
+                        query_log::at.eq(&e.at),
+                        query_log::client.eq(&e.client),
+                        query_log::view.eq(e.view.as_deref()),
+                        query_log::name.eq(&e.name),
+                        query_log::qtype.eq(&e.qtype),
+                        query_log::outcome.eq(&e.outcome),
+                        query_log::rcode.eq(&e.rcode),
+                    ))
+                    .execute(conn)?;
             }
-        }
-        tx.commit()
+            Ok(())
+        })
     }
 
     /// Keep only the most recent `max_rows` query-log rows.
-    pub fn prune_query_log(conn: &Connection, max_rows: i64) -> rusqlite::Result<()> {
-        conn.execute(
-            "DELETE FROM query_log WHERE id <= (SELECT COALESCE(MAX(id),0) FROM query_log) - ?1",
-            params![max_rows],
-        )?;
-        Ok(())
+    pub fn prune_query_log(conn: &mut SqliteConnection, max_rows: i64) -> QueryResult<()> {
+        diesel::sql_query(
+            "DELETE FROM query_log WHERE id <= (SELECT COALESCE(MAX(id),0) FROM query_log) - ?",
+        )
+        .bind::<BigInt, _>(max_rows)
+        .execute(conn)
+        .map(|_| ())
     }
 
     /// A filtered/sorted/paginated page of the query log, plus the total match
     /// count. `sort` is one of at|name|client|qtype|outcome; `desc` reverses.
     #[allow(clippy::too_many_arguments)]
     pub fn query_log_page(
-        conn: &Connection,
+        conn: &mut SqliteConnection,
         search: Option<&str>,
         outcome: Option<&str>,
         qtype: Option<&str>,
@@ -962,27 +1149,32 @@ impl Db {
         desc: bool,
         limit: i64,
         offset: i64,
-    ) -> rusqlite::Result<(Vec<RecentQuery>, i64)> {
+    ) -> QueryResult<(Vec<RecentQuery>, i64)> {
+        // All dynamic WHERE binds are Text, so we collect them in order and bind
+        // the same sequence to both the COUNT and the page query.
         let mut wh = String::from(" WHERE 1=1");
-        let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        let mut binds: Vec<String> = Vec::new();
         if let Some(s) = search.filter(|s| !s.is_empty()) {
-            wh.push_str(" AND (name LIKE ?1 OR client LIKE ?1)");
-            args.push(Box::new(format!("%{s}%")));
+            wh.push_str(" AND (name LIKE ? OR client LIKE ?)");
+            let pat = format!("%{s}%");
+            binds.push(pat.clone());
+            binds.push(pat);
         }
         if let Some(o) = outcome.filter(|s| !s.is_empty()) {
-            wh.push_str(&format!(" AND outcome = ?{}", args.len() + 1));
-            args.push(Box::new(o.to_string()));
+            wh.push_str(" AND outcome = ?");
+            binds.push(o.to_string());
         }
         if let Some(t) = qtype.filter(|s| !s.is_empty()) {
-            wh.push_str(&format!(" AND qtype = ?{}", args.len() + 1));
-            args.push(Box::new(t.to_ascii_uppercase()));
+            wh.push_str(" AND qtype = ?");
+            binds.push(t.to_ascii_uppercase());
         }
 
-        let total: i64 = conn.query_row(
-            &format!("SELECT COUNT(*) FROM query_log{wh}"),
-            rusqlite::params_from_iter(args.iter().map(|b| b.as_ref())),
-            |r| r.get(0),
-        )?;
+        let mut count_q = diesel::sql_query(format!("SELECT COUNT(*) AS n FROM query_log{wh}"))
+            .into_boxed::<Sqlite>();
+        for b in &binds {
+            count_q = count_q.bind::<Text, _>(b.clone());
+        }
+        let total = count_q.get_result::<CountRow>(conn)?.n;
 
         let col = match sort {
             "name" => "name",
@@ -992,522 +1184,571 @@ impl Db {
             _ => "id", // "at" — id is monotonic with time and cheaper
         };
         let dir = if desc { "DESC" } else { "ASC" };
-        let lim_idx = args.len() + 1;
-        let off_idx = args.len() + 2;
-        let sql = format!(
+        let page_sql = format!(
             "SELECT at, client, view, name, qtype, outcome, rcode FROM query_log{wh}
-             ORDER BY {col} {dir} LIMIT ?{lim_idx} OFFSET ?{off_idx}"
+             ORDER BY {col} {dir} LIMIT ? OFFSET ?"
         );
-        args.push(Box::new(limit));
-        args.push(Box::new(offset));
-
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt
-            .query_map(
-                rusqlite::params_from_iter(args.iter().map(|b| b.as_ref())),
-                |r| {
-                    Ok(RecentQuery {
-                        at: r.get(0)?,
-                        client: r.get(1)?,
-                        view: r.get(2)?,
-                        name: r.get(3)?,
-                        qtype: r.get(4)?,
-                        outcome: r.get(5)?,
-                        rcode: r.get(6)?,
-                    })
-                },
-            )?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok((rows, total))
-    }
-
-    pub fn get_settings(conn: &Connection) -> rusqlite::Result<Settings> {
-        let json: Option<String> = conn
-            .query_row("SELECT json FROM settings WHERE id = 1", [], |r| r.get(0))
-            .optional()?;
-        match json {
-            Some(j) => serde_json::from_str(&j).map_err(json_err),
-            None => Ok(Settings::default()),
+        let mut page_q = diesel::sql_query(page_sql).into_boxed::<Sqlite>();
+        for b in &binds {
+            page_q = page_q.bind::<Text, _>(b.clone());
         }
-    }
-
-    pub fn put_settings(conn: &Connection, settings: &Settings) -> rusqlite::Result<()> {
-        let json = serde_json::to_string(settings).map_err(json_err)?;
-        conn.execute(
-            "INSERT INTO settings (id, json) VALUES (1, ?1)
-             ON CONFLICT(id) DO UPDATE SET json = excluded.json",
-            params![json],
-        )?;
-        Ok(())
+        page_q = page_q.bind::<BigInt, _>(limit).bind::<BigInt, _>(offset);
+        let rows = page_q
+            .load::<QlogRow>(conn)?
+            .into_iter()
+            .map(|r| RecentQuery {
+                at: r.at,
+                client: r.client,
+                view: r.view,
+                name: r.name,
+                qtype: r.qtype,
+                outcome: r.outcome,
+                rcode: r.rcode,
+            })
+            .collect();
+        Ok((rows, total))
     }
 
     // ----- blocklists ------------------------------------------------------
 
-    pub fn list_blocklists(conn: &Connection) -> rusqlite::Result<Vec<Blocklist>> {
-        let mut stmt = conn.prepare(
-            "SELECT b.id, b.name, b.url, b.format, b.enabled, b.last_updated, b.last_error,
-                    b.created_at,
-                    (SELECT COUNT(*) FROM blocklist_entries e WHERE e.blocklist_id = b.id) AS cnt
-             FROM blocklists b ORDER BY b.name ASC",
-        )?;
-        let rows = stmt
-            .query_map([], Self::map_blocklist)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
+    pub fn list_blocklists(conn: &mut SqliteConnection) -> QueryResult<Vec<Blocklist>> {
+        let sql = format!("{BLOCKLIST_SELECT} ORDER BY b.name ASC");
+        Ok(diesel::sql_query(sql)
+            .load::<BlocklistRaw>(conn)?
+            .into_iter()
+            .map(BlocklistRaw::into_blocklist)
+            .collect())
     }
 
-    pub fn blocklist(conn: &Connection, id: i64) -> rusqlite::Result<Option<Blocklist>> {
-        conn.query_row(
-            "SELECT b.id, b.name, b.url, b.format, b.enabled, b.last_updated, b.last_error,
-                    b.created_at,
-                    (SELECT COUNT(*) FROM blocklist_entries e WHERE e.blocklist_id = b.id) AS cnt
-             FROM blocklists b WHERE b.id = ?1",
-            params![id],
-            Self::map_blocklist,
-        )
-        .optional()
+    pub fn blocklist(conn: &mut SqliteConnection, id: i64) -> QueryResult<Option<Blocklist>> {
+        let sql = format!("{BLOCKLIST_SELECT} WHERE b.id = ?");
+        Ok(diesel::sql_query(sql)
+            .bind::<BigInt, _>(id)
+            .get_result::<BlocklistRaw>(conn)
+            .optional()?
+            .map(BlocklistRaw::into_blocklist))
     }
 
     pub fn create_blocklist(
-        conn: &Connection,
+        conn: &mut SqliteConnection,
         name: &str,
         url: &str,
         format: BlocklistFormat,
         enabled: bool,
-    ) -> rusqlite::Result<i64> {
-        conn.execute(
-            "INSERT INTO blocklists (name, url, format, enabled, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![name, url, enum_to_str(&format), enabled as i64, now()],
-        )?;
-        Ok(conn.last_insert_rowid())
+    ) -> QueryResult<i64> {
+        diesel::insert_into(blocklists::table)
+            .values((
+                blocklists::name.eq(name),
+                blocklists::url.eq(url),
+                blocklists::format.eq(enum_to_str(&format)),
+                blocklists::enabled.eq(enabled),
+                blocklists::created_at.eq(now()),
+            ))
+            .returning(blocklists::id)
+            .get_result(conn)
     }
 
     pub fn update_blocklist(
-        conn: &Connection,
+        conn: &mut SqliteConnection,
         id: i64,
         name: Option<&str>,
         enabled: Option<bool>,
-    ) -> rusqlite::Result<()> {
+    ) -> QueryResult<()> {
         if let Some(n) = name {
-            conn.execute("UPDATE blocklists SET name = ?1 WHERE id = ?2", params![n, id])?;
+            diesel::update(blocklists::table.filter(blocklists::id.eq(id)))
+                .set(blocklists::name.eq(n))
+                .execute(conn)?;
         }
         if let Some(e) = enabled {
-            conn.execute(
-                "UPDATE blocklists SET enabled = ?1 WHERE id = ?2",
-                params![e as i64, id],
-            )?;
+            diesel::update(blocklists::table.filter(blocklists::id.eq(id)))
+                .set(blocklists::enabled.eq(e))
+                .execute(conn)?;
         }
         Ok(())
     }
 
-    pub fn delete_blocklist(conn: &Connection, id: i64) -> rusqlite::Result<()> {
-        conn.execute("DELETE FROM blocklists WHERE id = ?1", params![id])?;
-        Ok(())
+    pub fn delete_blocklist(conn: &mut SqliteConnection, id: i64) -> QueryResult<()> {
+        diesel::delete(blocklists::table.filter(blocklists::id.eq(id)))
+            .execute(conn)
+            .map(|_| ())
     }
 
     /// Replace the cached entries of a blocklist with a freshly fetched set.
     pub fn replace_blocklist_entries(
-        conn: &mut Connection,
+        conn: &mut SqliteConnection,
         id: i64,
         domains: &[String],
         error: Option<&str>,
-    ) -> rusqlite::Result<()> {
-        let tx = conn.transaction()?;
-        tx.execute("DELETE FROM blocklist_entries WHERE blocklist_id = ?1", params![id])?;
-        {
-            let mut stmt =
-                tx.prepare("INSERT INTO blocklist_entries (blocklist_id, domain) VALUES (?1, ?2)")?;
+    ) -> QueryResult<()> {
+        conn.transaction(|conn| {
+            diesel::delete(blocklist_entries::table.filter(blocklist_entries::blocklist_id.eq(id)))
+                .execute(conn)?;
             for d in domains {
-                stmt.execute(params![id, d])?;
+                diesel::insert_into(blocklist_entries::table)
+                    .values((
+                        blocklist_entries::blocklist_id.eq(id),
+                        blocklist_entries::domain.eq(d),
+                    ))
+                    .execute(conn)?;
             }
-        }
-        tx.execute(
-            "UPDATE blocklists SET last_updated = ?1, last_error = ?2 WHERE id = ?3",
-            params![now(), error, id],
-        )?;
-        tx.commit()
+            diesel::update(blocklists::table.filter(blocklists::id.eq(id)))
+                .set((
+                    blocklists::last_updated.eq(now()),
+                    blocklists::last_error.eq(error),
+                ))
+                .execute(conn)?;
+            Ok(())
+        })
     }
 
-    pub fn set_blocklist_error(conn: &Connection, id: i64, error: &str) -> rusqlite::Result<()> {
-        conn.execute(
-            "UPDATE blocklists SET last_error = ?1 WHERE id = ?2",
-            params![error, id],
-        )?;
-        Ok(())
+    pub fn set_blocklist_error(
+        conn: &mut SqliteConnection,
+        id: i64,
+        error: &str,
+    ) -> QueryResult<()> {
+        diesel::update(blocklists::table.filter(blocklists::id.eq(id)))
+            .set(blocklists::last_error.eq(error))
+            .execute(conn)
+            .map(|_| ())
     }
 
     /// All domains from enabled blocklists, for building the in-memory filter.
-    pub fn enabled_block_domains(conn: &Connection) -> rusqlite::Result<Vec<String>> {
-        let mut stmt = conn.prepare(
-            "SELECT e.domain FROM blocklist_entries e
+    pub fn enabled_block_domains(conn: &mut SqliteConnection) -> QueryResult<Vec<String>> {
+        Ok(diesel::sql_query(
+            "SELECT e.domain AS domain FROM blocklist_entries e
              JOIN blocklists b ON b.id = e.blocklist_id
              WHERE b.enabled = 1",
-        )?;
-        let rows = stmt
-            .query_map([], |r| r.get::<_, String>(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
-
-    fn map_blocklist(r: &rusqlite::Row) -> rusqlite::Result<Blocklist> {
-        let fmt: String = r.get(3)?;
-        Ok(Blocklist {
-            id: r.get(0)?,
-            name: r.get(1)?,
-            url: r.get(2)?,
-            format: enum_from_str(&fmt).unwrap_or_default(),
-            enabled: r.get::<_, i64>(4)? != 0,
-            last_updated: r.get(5)?,
-            last_error: r.get(6)?,
-            created_at: r.get(7)?,
-            entry_count: r.get(8)?,
-        })
+        )
+        .load::<DomainRow>(conn)?
+        .into_iter()
+        .map(|r| r.domain)
+        .collect())
     }
 
     // ----- block rules -----------------------------------------------------
 
-    pub fn list_block_rules(conn: &Connection) -> rusqlite::Result<Vec<BlockRule>> {
-        let mut stmt = conn.prepare(
-            "SELECT id, domain, action, comment, created_at FROM block_rules ORDER BY domain ASC",
-        )?;
-        let rows = stmt
-            .query_map([], Self::map_block_rule)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
+    pub fn list_block_rules(conn: &mut SqliteConnection) -> QueryResult<Vec<BlockRule>> {
+        Ok(block_rules::table
+            .select((
+                block_rules::id,
+                block_rules::domain,
+                block_rules::action,
+                block_rules::comment,
+                block_rules::created_at,
+            ))
+            .order(block_rules::domain.asc())
+            .load::<(i64, String, String, Option<String>, String)>(conn)?
+            .into_iter()
+            .map(|t| BlockRule {
+                id: t.0,
+                domain: t.1,
+                action: enum_from_str(&t.2).unwrap_or(RuleAction::Deny),
+                comment: t.3,
+                created_at: t.4,
+            })
+            .collect())
     }
 
     pub fn create_block_rule(
-        conn: &Connection,
+        conn: &mut SqliteConnection,
         domain: &str,
         action: RuleAction,
         comment: Option<&str>,
-    ) -> rusqlite::Result<i64> {
-        conn.execute(
-            "INSERT INTO block_rules (domain, action, comment, created_at) VALUES (?1, ?2, ?3, ?4)",
-            params![domain, enum_to_str(&action), comment, now()],
-        )?;
-        Ok(conn.last_insert_rowid())
+    ) -> QueryResult<i64> {
+        diesel::insert_into(block_rules::table)
+            .values((
+                block_rules::domain.eq(domain),
+                block_rules::action.eq(enum_to_str(&action)),
+                block_rules::comment.eq(comment),
+                block_rules::created_at.eq(now()),
+            ))
+            .returning(block_rules::id)
+            .get_result(conn)
     }
 
-    pub fn delete_block_rule(conn: &Connection, id: i64) -> rusqlite::Result<()> {
-        conn.execute("DELETE FROM block_rules WHERE id = ?1", params![id])?;
-        Ok(())
-    }
-
-    fn map_block_rule(r: &rusqlite::Row) -> rusqlite::Result<BlockRule> {
-        let action: String = r.get(2)?;
-        Ok(BlockRule {
-            id: r.get(0)?,
-            domain: r.get(1)?,
-            action: enum_from_str(&action).unwrap_or(RuleAction::Deny),
-            comment: r.get(3)?,
-            created_at: r.get(4)?,
-        })
+    pub fn delete_block_rule(conn: &mut SqliteConnection, id: i64) -> QueryResult<()> {
+        diesel::delete(block_rules::table.filter(block_rules::id.eq(id)))
+            .execute(conn)
+            .map(|_| ())
     }
 
     // ----- rewrites --------------------------------------------------------
 
-    pub fn list_rewrites(conn: &Connection) -> rusqlite::Result<Vec<Rewrite>> {
-        let mut stmt = conn.prepare(
-            "SELECT id, domain, target, enabled, comment, created_at FROM rewrites ORDER BY domain ASC",
-        )?;
-        let rows = stmt
-            .query_map([], Self::map_rewrite)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
+    pub fn list_rewrites(conn: &mut SqliteConnection) -> QueryResult<Vec<Rewrite>> {
+        Ok(rewrites::table
+            .select((
+                rewrites::id,
+                rewrites::domain,
+                rewrites::target,
+                rewrites::enabled,
+                rewrites::comment,
+                rewrites::created_at,
+            ))
+            .order(rewrites::domain.asc())
+            .load::<(i64, String, String, bool, Option<String>, String)>(conn)?
+            .into_iter()
+            .map(Self::rewrite_from)
+            .collect())
     }
 
-    pub fn rewrite(conn: &Connection, id: i64) -> rusqlite::Result<Option<Rewrite>> {
-        conn.query_row(
-            "SELECT id, domain, target, enabled, comment, created_at FROM rewrites WHERE id = ?1",
-            params![id],
-            Self::map_rewrite,
-        )
-        .optional()
+    pub fn rewrite(conn: &mut SqliteConnection, id: i64) -> QueryResult<Option<Rewrite>> {
+        rewrites::table
+            .filter(rewrites::id.eq(id))
+            .select((
+                rewrites::id,
+                rewrites::domain,
+                rewrites::target,
+                rewrites::enabled,
+                rewrites::comment,
+                rewrites::created_at,
+            ))
+            .first::<(i64, String, String, bool, Option<String>, String)>(conn)
+            .optional()
+            .map(|o| o.map(Self::rewrite_from))
     }
 
     pub fn create_rewrite(
-        conn: &Connection,
+        conn: &mut SqliteConnection,
         domain: &str,
         target: &str,
         comment: Option<&str>,
-    ) -> rusqlite::Result<i64> {
-        conn.execute(
-            "INSERT INTO rewrites (domain, target, enabled, comment, created_at)
-             VALUES (?1, ?2, 1, ?3, ?4)",
-            params![domain, target, comment, now()],
-        )?;
-        Ok(conn.last_insert_rowid())
+    ) -> QueryResult<i64> {
+        diesel::insert_into(rewrites::table)
+            .values((
+                rewrites::domain.eq(domain),
+                rewrites::target.eq(target),
+                rewrites::enabled.eq(true),
+                rewrites::comment.eq(comment),
+                rewrites::created_at.eq(now()),
+            ))
+            .returning(rewrites::id)
+            .get_result(conn)
     }
 
     pub fn update_rewrite(
-        conn: &Connection,
+        conn: &mut SqliteConnection,
         id: i64,
         domain: Option<&str>,
         target: Option<&str>,
         enabled: Option<bool>,
-    ) -> rusqlite::Result<()> {
+    ) -> QueryResult<()> {
         if let Some(d) = domain {
-            conn.execute("UPDATE rewrites SET domain = ?1 WHERE id = ?2", params![d, id])?;
+            diesel::update(rewrites::table.filter(rewrites::id.eq(id)))
+                .set(rewrites::domain.eq(d))
+                .execute(conn)?;
         }
         if let Some(t) = target {
-            conn.execute("UPDATE rewrites SET target = ?1 WHERE id = ?2", params![t, id])?;
+            diesel::update(rewrites::table.filter(rewrites::id.eq(id)))
+                .set(rewrites::target.eq(t))
+                .execute(conn)?;
         }
         if let Some(e) = enabled {
-            conn.execute("UPDATE rewrites SET enabled = ?1 WHERE id = ?2", params![e as i64, id])?;
+            diesel::update(rewrites::table.filter(rewrites::id.eq(id)))
+                .set(rewrites::enabled.eq(e))
+                .execute(conn)?;
         }
         Ok(())
     }
 
-    pub fn delete_rewrite(conn: &Connection, id: i64) -> rusqlite::Result<()> {
-        conn.execute("DELETE FROM rewrites WHERE id = ?1", params![id])?;
-        Ok(())
+    pub fn delete_rewrite(conn: &mut SqliteConnection, id: i64) -> QueryResult<()> {
+        diesel::delete(rewrites::table.filter(rewrites::id.eq(id)))
+            .execute(conn)
+            .map(|_| ())
     }
 
-    fn map_rewrite(r: &rusqlite::Row) -> rusqlite::Result<Rewrite> {
-        Ok(Rewrite {
-            id: r.get(0)?,
-            domain: r.get(1)?,
-            target: r.get(2)?,
-            enabled: r.get::<_, i64>(3)? != 0,
-            comment: r.get(4)?,
-            created_at: r.get(5)?,
-        })
+    fn rewrite_from(t: (i64, String, String, bool, Option<String>, String)) -> Rewrite {
+        Rewrite {
+            id: t.0,
+            domain: t.1,
+            target: t.2,
+            enabled: t.3,
+            comment: t.4,
+            created_at: t.5,
+        }
     }
 
     // ----- conditional forwards -------------------------------------------
 
     pub fn list_conditional_forwards(
-        conn: &Connection,
-    ) -> rusqlite::Result<Vec<ConditionalForward>> {
-        let mut stmt = conn.prepare(
-            "SELECT id, domain, forwarders, enabled, created_at
-             FROM conditional_forwards ORDER BY domain ASC",
-        )?;
-        let rows = stmt
-            .query_map([], Self::map_conditional)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
+        conn: &mut SqliteConnection,
+    ) -> QueryResult<Vec<ConditionalForward>> {
+        conditional_forwards::table
+            .select((
+                conditional_forwards::id,
+                conditional_forwards::domain,
+                conditional_forwards::forwarders,
+                conditional_forwards::enabled,
+                conditional_forwards::created_at,
+            ))
+            .order(conditional_forwards::domain.asc())
+            .load::<(i64, String, String, bool, String)>(conn)?
+            .into_iter()
+            .map(Self::conditional_from)
+            .collect()
     }
 
     pub fn conditional_forward(
-        conn: &Connection,
+        conn: &mut SqliteConnection,
         id: i64,
-    ) -> rusqlite::Result<Option<ConditionalForward>> {
-        conn.query_row(
-            "SELECT id, domain, forwarders, enabled, created_at
-             FROM conditional_forwards WHERE id = ?1",
-            params![id],
-            Self::map_conditional,
-        )
-        .optional()
+    ) -> QueryResult<Option<ConditionalForward>> {
+        conditional_forwards::table
+            .filter(conditional_forwards::id.eq(id))
+            .select((
+                conditional_forwards::id,
+                conditional_forwards::domain,
+                conditional_forwards::forwarders,
+                conditional_forwards::enabled,
+                conditional_forwards::created_at,
+            ))
+            .first::<(i64, String, String, bool, String)>(conn)
+            .optional()?
+            .map(Self::conditional_from)
+            .transpose()
     }
 
     pub fn create_conditional_forward(
-        conn: &Connection,
+        conn: &mut SqliteConnection,
         domain: &str,
         forwarders: &[Forwarder],
-    ) -> rusqlite::Result<i64> {
+    ) -> QueryResult<i64> {
         let json = serde_json::to_string(forwarders).map_err(json_err)?;
-        conn.execute(
-            "INSERT INTO conditional_forwards (domain, forwarders, enabled, created_at)
-             VALUES (?1, ?2, 1, ?3)",
-            params![domain, json, now()],
-        )?;
-        Ok(conn.last_insert_rowid())
+        diesel::insert_into(conditional_forwards::table)
+            .values((
+                conditional_forwards::domain.eq(domain),
+                conditional_forwards::forwarders.eq(json),
+                conditional_forwards::enabled.eq(true),
+                conditional_forwards::created_at.eq(now()),
+            ))
+            .returning(conditional_forwards::id)
+            .get_result(conn)
     }
 
     pub fn update_conditional_forward(
-        conn: &Connection,
+        conn: &mut SqliteConnection,
         id: i64,
         forwarders: Option<&[Forwarder]>,
         enabled: Option<bool>,
-    ) -> rusqlite::Result<()> {
+    ) -> QueryResult<()> {
         if let Some(f) = forwarders {
             let json = serde_json::to_string(f).map_err(json_err)?;
-            conn.execute(
-                "UPDATE conditional_forwards SET forwarders = ?1 WHERE id = ?2",
-                params![json, id],
-            )?;
+            diesel::update(conditional_forwards::table.filter(conditional_forwards::id.eq(id)))
+                .set(conditional_forwards::forwarders.eq(json))
+                .execute(conn)?;
         }
         if let Some(e) = enabled {
-            conn.execute(
-                "UPDATE conditional_forwards SET enabled = ?1 WHERE id = ?2",
-                params![e as i64, id],
-            )?;
+            diesel::update(conditional_forwards::table.filter(conditional_forwards::id.eq(id)))
+                .set(conditional_forwards::enabled.eq(e))
+                .execute(conn)?;
         }
         Ok(())
     }
 
-    pub fn delete_conditional_forward(conn: &Connection, id: i64) -> rusqlite::Result<()> {
-        conn.execute("DELETE FROM conditional_forwards WHERE id = ?1", params![id])?;
-        Ok(())
+    pub fn delete_conditional_forward(conn: &mut SqliteConnection, id: i64) -> QueryResult<()> {
+        diesel::delete(conditional_forwards::table.filter(conditional_forwards::id.eq(id)))
+            .execute(conn)
+            .map(|_| ())
     }
 
-    fn map_conditional(r: &rusqlite::Row) -> rusqlite::Result<ConditionalForward> {
-        let json: String = r.get(2)?;
-        let forwarders: Vec<Forwarder> = serde_json::from_str(&json).map_err(json_err)?;
+    fn conditional_from(t: (i64, String, String, bool, String)) -> QueryResult<ConditionalForward> {
+        let forwarders: Vec<Forwarder> = serde_json::from_str(&t.2).map_err(json_err)?;
         Ok(ConditionalForward {
-            id: r.get(0)?,
-            domain: r.get(1)?,
+            id: t.0,
+            domain: t.1,
             forwarders,
-            enabled: r.get::<_, i64>(3)? != 0,
-            created_at: r.get(4)?,
+            enabled: t.3,
+            created_at: t.4,
         })
     }
 
     // ----- DNSSEC keys -----------------------------------------------------
 
     pub fn create_dnssec_key(
-        conn: &Connection,
+        conn: &mut SqliteConnection,
         zone_id: i64,
         algorithm: i64,
         secret: &str,
         nsec3: bool,
         salt_hex: Option<&str>,
         iterations: i64,
-    ) -> rusqlite::Result<()> {
-        conn.execute(
-            "INSERT INTO dnssec_keys (zone_id, algorithm, secret, nsec3, salt, iterations, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-             ON CONFLICT(zone_id) DO UPDATE SET algorithm = excluded.algorithm,
-                 secret = excluded.secret, nsec3 = excluded.nsec3, salt = excluded.salt,
-                 iterations = excluded.iterations, created_at = excluded.created_at",
-            params![zone_id, algorithm, secret, nsec3 as i64, salt_hex, iterations, now()],
-        )?;
-        Ok(())
+    ) -> QueryResult<()> {
+        let ts = now();
+        diesel::insert_into(dnssec_keys::table)
+            .values((
+                dnssec_keys::zone_id.eq(zone_id),
+                dnssec_keys::algorithm.eq(algorithm),
+                dnssec_keys::secret.eq(secret),
+                dnssec_keys::nsec3.eq(nsec3),
+                dnssec_keys::salt.eq(salt_hex),
+                dnssec_keys::iterations.eq(iterations),
+                dnssec_keys::created_at.eq(&ts),
+            ))
+            .on_conflict(dnssec_keys::zone_id)
+            .do_update()
+            .set((
+                dnssec_keys::algorithm.eq(algorithm),
+                dnssec_keys::secret.eq(secret),
+                dnssec_keys::nsec3.eq(nsec3),
+                dnssec_keys::salt.eq(salt_hex),
+                dnssec_keys::iterations.eq(iterations),
+                dnssec_keys::created_at.eq(&ts),
+            ))
+            .execute(conn)
+            .map(|_| ())
     }
 
     /// Returns `(secret_b64, nsec3, salt_hex, iterations)` for a signed zone.
     pub fn dnssec_config(
-        conn: &Connection,
+        conn: &mut SqliteConnection,
         zone_id: i64,
-    ) -> rusqlite::Result<Option<(String, bool, Option<String>, u16)>> {
-        conn.query_row(
-            "SELECT secret, nsec3, salt, iterations FROM dnssec_keys WHERE zone_id = ?1",
-            params![zone_id],
-            |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, i64>(1)? != 0,
-                    r.get::<_, Option<String>>(2)?,
-                    r.get::<_, i64>(3)? as u16,
-                ))
-            },
-        )
-        .optional()
+    ) -> QueryResult<Option<(String, bool, Option<String>, u16)>> {
+        dnssec_keys::table
+            .filter(dnssec_keys::zone_id.eq(zone_id))
+            .select((
+                dnssec_keys::secret,
+                dnssec_keys::nsec3,
+                dnssec_keys::salt,
+                dnssec_keys::iterations,
+            ))
+            .first::<(String, bool, Option<String>, i64)>(conn)
+            .optional()
+            .map(|o| o.map(|(secret, nsec3, salt, iters)| (secret, nsec3, salt, iters as u16)))
     }
 
-    pub fn delete_dnssec_key(conn: &Connection, zone_id: i64) -> rusqlite::Result<()> {
-        conn.execute("DELETE FROM dnssec_keys WHERE zone_id = ?1", params![zone_id])?;
-        Ok(())
+    pub fn delete_dnssec_key(conn: &mut SqliteConnection, zone_id: i64) -> QueryResult<()> {
+        diesel::delete(dnssec_keys::table.filter(dnssec_keys::zone_id.eq(zone_id)))
+            .execute(conn)
+            .map(|_| ())
     }
 
     // ----- secondary zones -------------------------------------------------
 
-    pub fn list_secondaries(conn: &Connection) -> rusqlite::Result<Vec<SecondaryZone>> {
-        let mut stmt = conn.prepare(
-            "SELECT s.zone_id, z.name, s.primary_addr, s.refresh_secs, z.serial,
+    pub fn list_secondaries(conn: &mut SqliteConnection) -> QueryResult<Vec<SecondaryZone>> {
+        Ok(diesel::sql_query(
+            "SELECT s.zone_id AS zone_id, z.name AS name, s.primary_addr AS primary_addr,
+                    s.refresh_secs AS refresh_secs, z.serial AS serial,
                     (SELECT COUNT(*) FROM records r WHERE r.zone_id = z.id) AS rc,
-                    s.last_check, s.last_error, s.tsig_key
+                    s.last_check AS last_check, s.last_error AS last_error, s.tsig_key AS tsig_key
              FROM secondary_zones s JOIN zones z ON z.id = s.zone_id
              ORDER BY z.name ASC",
-        )?;
-        let rows = stmt
-            .query_map([], |r| {
-                Ok(SecondaryZone {
-                    zone_id: r.get(0)?,
-                    name: r.get(1)?,
-                    primary_addr: r.get(2)?,
-                    refresh_secs: r.get(3)?,
-                    serial: r.get(4)?,
-                    record_count: r.get(5)?,
-                    last_check: r.get(6)?,
-                    last_error: r.get(7)?,
-                    tsig_key: r.get(8)?,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
+        )
+        .load::<SecondaryRaw>(conn)?
+        .into_iter()
+        .map(|r| SecondaryZone {
+            zone_id: r.zone_id,
+            name: r.name,
+            primary_addr: r.primary_addr,
+            refresh_secs: r.refresh_secs,
+            serial: r.serial as u32,
+            record_count: r.rc,
+            last_check: r.last_check,
+            last_error: r.last_error,
+            tsig_key: r.tsig_key,
+        })
+        .collect())
     }
 
-    pub fn secondary(conn: &Connection, zone_id: i64) -> rusqlite::Result<Option<String>> {
-        let row: Option<Option<String>> = conn
-            .query_row(
-                "SELECT tsig_key FROM secondary_zones WHERE zone_id = ?1",
-                params![zone_id],
-                |r| r.get::<_, Option<String>>(0),
-            )
+    pub fn secondary(conn: &mut SqliteConnection, zone_id: i64) -> QueryResult<Option<String>> {
+        let row: Option<Option<String>> = secondary_zones::table
+            .filter(secondary_zones::zone_id.eq(zone_id))
+            .select(secondary_zones::tsig_key)
+            .first::<Option<String>>(conn)
             .optional()?;
         Ok(row.flatten())
     }
 
     pub fn create_secondary(
-        conn: &Connection,
+        conn: &mut SqliteConnection,
         zone_id: i64,
         primary_addr: &str,
         refresh_secs: i64,
         tsig_key: Option<&str>,
-    ) -> rusqlite::Result<()> {
-        conn.execute(
-            "INSERT INTO secondary_zones (zone_id, primary_addr, refresh_secs, tsig_key, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![zone_id, primary_addr, refresh_secs, tsig_key, now()],
-        )?;
-        Ok(())
+    ) -> QueryResult<()> {
+        diesel::insert_into(secondary_zones::table)
+            .values((
+                secondary_zones::zone_id.eq(zone_id),
+                secondary_zones::primary_addr.eq(primary_addr),
+                secondary_zones::refresh_secs.eq(refresh_secs),
+                secondary_zones::tsig_key.eq(tsig_key),
+                secondary_zones::created_at.eq(now()),
+            ))
+            .execute(conn)
+            .map(|_| ())
     }
 
     pub fn set_secondary_status(
-        conn: &Connection,
+        conn: &mut SqliteConnection,
         zone_id: i64,
         last_error: Option<&str>,
         refresh_secs: Option<i64>,
-    ) -> rusqlite::Result<()> {
-        conn.execute(
-            "UPDATE secondary_zones SET last_check = ?1, last_error = ?2 WHERE zone_id = ?3",
-            params![now(), last_error, zone_id],
-        )?;
+    ) -> QueryResult<()> {
+        diesel::update(secondary_zones::table.filter(secondary_zones::zone_id.eq(zone_id)))
+            .set((
+                secondary_zones::last_check.eq(now()),
+                secondary_zones::last_error.eq(last_error),
+            ))
+            .execute(conn)?;
         if let Some(r) = refresh_secs {
-            conn.execute(
-                "UPDATE secondary_zones SET refresh_secs = ?1 WHERE zone_id = ?2",
-                params![r, zone_id],
-            )?;
+            diesel::update(secondary_zones::table.filter(secondary_zones::zone_id.eq(zone_id)))
+                .set(secondary_zones::refresh_secs.eq(r))
+                .execute(conn)?;
         }
         Ok(())
     }
 
     /// Replace a secondary zone's SOA, serial, and records from a transfer.
     pub fn replace_secondary_zone(
-        conn: &mut Connection,
+        conn: &mut SqliteConnection,
         zone_id: i64,
         soa: &Soa,
         serial: u32,
         records: &[(String, String, u32, String)],
-    ) -> rusqlite::Result<usize> {
+    ) -> QueryResult<usize> {
         let soa_json = serde_json::to_string(soa).map_err(json_err)?;
         let ts = now();
-        let tx = conn.transaction()?;
-        tx.execute(
-            "UPDATE zones SET soa = ?1, serial = ?2, updated_at = ?3 WHERE id = ?4",
-            params![soa_json, serial, ts, zone_id],
-        )?;
-        tx.execute("DELETE FROM records WHERE zone_id = ?1", params![zone_id])?;
-        let mut count = 0;
-        {
-            let mut stmt = tx.prepare(
-                "INSERT INTO records (zone_id, view_id, name, rtype, ttl, data, enabled, created_at, updated_at)
-                 VALUES (?1, NULL, ?2, ?3, ?4, ?5, 1, ?6, ?6)",
-            )?;
+        conn.transaction(|conn| {
+            diesel::update(zones::table.filter(zones::id.eq(zone_id)))
+                .set((
+                    zones::soa.eq(&soa_json),
+                    zones::serial.eq(serial as i64),
+                    zones::updated_at.eq(&ts),
+                ))
+                .execute(conn)?;
+            diesel::delete(records::table.filter(records::zone_id.eq(zone_id))).execute(conn)?;
+            let mut count = 0;
             for (name, rtype, ttl, data) in records {
-                stmt.execute(params![zone_id, name, rtype, ttl, data, ts])?;
+                diesel::insert_into(records::table)
+                    .values((
+                        records::zone_id.eq(zone_id),
+                        records::view_id.eq(None::<i64>),
+                        records::name.eq(name),
+                        records::rtype.eq(rtype),
+                        records::ttl.eq(*ttl as i64),
+                        records::data.eq(data),
+                        records::enabled.eq(true),
+                        records::created_at.eq(&ts),
+                        records::updated_at.eq(&ts),
+                    ))
+                    .execute(conn)?;
                 count += 1;
             }
-        }
-        tx.commit()?;
-        Ok(count)
+            Ok(count)
+        })
     }
 }
+
+/// The column tuple type used for [`DnsRecord`] reads.
+type RecordTuple = (
+    i64,
+    i64,
+    Option<i64>,
+    String,
+    String,
+    Option<i64>,
+    String,
+    bool,
+    String,
+    String,
+);
 
 /// Serialize a unit enum (with serde `rename_all`) to its string form.
 fn enum_to_str<T: serde::Serialize>(v: &T) -> String {

@@ -12,6 +12,7 @@ mod error;
 mod filter;
 mod models;
 mod privileges;
+mod schema;
 mod state;
 mod stats;
 mod store;
@@ -34,7 +35,11 @@ use crate::state::{AppState, SharedState};
 use crate::store::ZoneStore;
 
 #[derive(Parser, Debug)]
-#[command(name = "nomina", version, about = "Split-horizon DNS server for homelabs")]
+#[command(
+    name = "nomina",
+    version,
+    about = "Split-horizon DNS server for homelabs"
+)]
 struct Cli {
     /// Path to a TOML configuration file.
     #[arg(short, long, env = "NOMINA_CONFIG")]
@@ -153,8 +158,7 @@ async fn main() -> anyhow::Result<()> {
     let conditional = dns::conditional::ConditionalSet::load(&db, &settings)?;
 
     // Channel feeding the async query-log writer (bounded; drops under backpressure).
-    let (qlog_tx, mut qlog_rx) =
-        tokio::sync::mpsc::channel::<crate::stats::RecentQuery>(10_000);
+    let (qlog_tx, mut qlog_rx) = tokio::sync::mpsc::channel::<crate::stats::RecentQuery>(10_000);
 
     let state: SharedState = Arc::new(AppState::new(
         db,
@@ -268,8 +272,15 @@ async fn main() -> anyhow::Result<()> {
     let dns_handler = DnsHandler::new(state.clone());
     let dns_config = config.clone();
     let dns_task = tokio::spawn(async move {
-        if let Err(e) =
-            dns::server::run(dns_config, dns_handler, dns_sockets, dot_tls, doq_tls, doh3_tls).await
+        if let Err(e) = dns::server::run(
+            dns_config,
+            dns_handler,
+            dns_sockets,
+            dot_tls,
+            doq_tls,
+            doh3_tls,
+        )
+        .await
         {
             tracing::error!("DNS server stopped: {e}");
         }

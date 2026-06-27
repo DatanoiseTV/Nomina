@@ -16,6 +16,8 @@ axum = { version = "0.8", features = ["macros"] }
 base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
 data-encoding = "2"
+diesel = { version = "2", features = ["sqlite", "returning_clauses_for_sqlite_3_35"] }
+diesel_migrations = "2"
 futures-util = "0.3"
 hickory-proto = { version = "0.26", features = ["dnssec-ring"] }
 hickory-resolver = { version = "0.26", features = ["tokio", "system-config", "tls-ring", "https-ring", "recursor", "dnssec-ring"] }
@@ -25,12 +27,14 @@ hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto"] }
 idna = "1"
 ipnet = { version = "2", features = ["serde"] }
 libc = "0.2"
+# Bundle SQLite so the single binary has no system-sqlite dependency. Version
+# pinned to match diesel 2's libsqlite3-sys requirement (one resolved version).
+libsqlite3-sys = { version = "0.30", features = ["bundled"] }
 nix = { version = "0.29", default-features = false, features = ["user"] }
 parking_lot = "0.12"
 rand = "0.8"
 rcgen = "0.13"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "http2"] }
-rusqlite = { version = "0.37", features = ["bundled"] }
 rust-embed = { version = "8", features = ["mime-guess"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
 rustls-pemfile = "2"

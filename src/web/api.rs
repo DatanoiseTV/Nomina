@@ -10,8 +10,8 @@ use axum::response::{IntoResponse, Response};
 use ipnet::IpNet;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use time::OffsetDateTime;
 use time::Duration as TimeDuration;
+use time::OffsetDateTime;
 
 use crate::db::Db;
 use crate::dns::server::listener_infos;
@@ -118,7 +118,10 @@ pub async fn stats(State(state): State<SharedState>, _auth: Authed) -> Response 
     };
     if let Some(obj) = snap.as_object_mut() {
         obj.insert("query_log".into(), json!(state.query_log()));
-        obj.insert("dnssec_validate".into(), json!(state.dnssec_validate_upstream()));
+        obj.insert(
+            "dnssec_validate".into(),
+            json!(state.dnssec_validate_upstream()),
+        );
         obj.insert(
             "cache".into(),
             json!({ "hits": hits, "misses": misses, "size": size, "hit_rate": hit_rate }),
@@ -180,7 +183,10 @@ pub async fn query_log(
 }
 
 /// Clear the persistent query log.
-pub async fn clear_query_log(State(state): State<SharedState>, _auth: Authed) -> ApiResult<Response> {
+pub async fn clear_query_log(
+    State(state): State<SharedState>,
+    _auth: Authed,
+) -> ApiResult<Response> {
     state.db.run(|c| Db::prune_query_log(c, 0)).await?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -276,10 +282,7 @@ pub async fn logout(
         let _ = state.db.run(move |c| Db::delete_session(c, &hashed)).await;
     }
     let secure = state.config.web.tls;
-    let clear = vec![
-        session_cookie("", secure, 0),
-        csrf_cookie("", secure, 0),
-    ];
+    let clear = vec![session_cookie("", secure, 0), csrf_cookie("", secure, 0)];
     Ok(with_cookies(StatusCode::NO_CONTENT, json!({}), clear))
 }
 
@@ -310,7 +313,10 @@ pub async fn setup(
         return Err(validation_field("username", "must not be empty"));
     }
     if req.password.len() < 12 {
-        return Err(validation_field("password", "must be at least 12 characters"));
+        return Err(validation_field(
+            "password",
+            "must be at least 12 characters",
+        ));
     }
 
     let username = req.username.trim().to_string();
@@ -319,9 +325,10 @@ pub async fn setup(
         .db
         .run(move |c| {
             if Db::user_count(c)? > 0 {
-                return Err(rusqlite::Error::SqliteFailure(
-                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CONSTRAINT),
-                    Some("setup already completed".into()),
+                // Signal "already completed" as a constraint conflict (→ 409).
+                return Err(diesel::result::Error::DatabaseError(
+                    diesel::result::DatabaseErrorKind::UniqueViolation,
+                    Box::new("setup already completed".to_string()),
                 ));
             }
             Db::create_user(c, &username, &hash, false)
@@ -360,7 +367,10 @@ pub async fn change_password(
     Json(req): Json<ChangePasswordRequest>,
 ) -> ApiResult<Response> {
     if req.new_password.len() < 12 {
-        return Err(validation_field("new_password", "must be at least 12 characters"));
+        return Err(validation_field(
+            "new_password",
+            "must be at least 12 characters",
+        ));
     }
     let uid = auth.user.id;
     let row = state
@@ -372,7 +382,10 @@ pub async fn change_password(
         return Err(AppError::forbidden("Current password is incorrect"));
     }
     let hash = hash_password(&req.new_password)?;
-    state.db.run(move |c| Db::set_password(c, uid, &hash)).await?;
+    state
+        .db
+        .run(move |c| Db::set_password(c, uid, &hash))
+        .await?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -418,7 +431,10 @@ pub async fn create_view(
     Json(req): Json<ViewCreate>,
 ) -> ApiResult<Response> {
     if !valid_view_name(&req.name) {
-        return Err(validation_field("name", "1-40 chars, alphanumeric/_/- only"));
+        return Err(validation_field(
+            "name",
+            "1-40 chars, alphanumeric/_/- only",
+        ));
     }
     validate_networks(&req.networks)?;
     let name = req.name.clone();
@@ -445,12 +461,17 @@ pub async fn update_view(
         .ok_or_else(|| AppError::not_found("view not found"))?;
     if let Some(name) = &req.name {
         if !valid_view_name(name) {
-            return Err(validation_field("name", "1-40 chars, alphanumeric/_/- only"));
+            return Err(validation_field(
+                "name",
+                "1-40 chars, alphanumeric/_/- only",
+            ));
         }
     }
     if let Some(nets) = &req.networks {
         if existing.is_default {
-            return Err(AppError::conflict("cannot change networks of the default view"));
+            return Err(AppError::conflict(
+                "cannot change networks of the default view",
+            ));
         }
         validate_networks(nets)?;
     }
@@ -458,9 +479,7 @@ pub async fn update_view(
     let nets = req.networks.clone();
     state
         .db
-        .run(move |c| {
-            Db::update_view(c, id, name.as_deref(), nets.as_deref(), req.priority)
-        })
+        .run(move |c| Db::update_view(c, id, name.as_deref(), nets.as_deref(), req.priority))
         .await?;
     state.reload_store()?;
     let view = state.db.run(move |c| Db::view(c, id)).await?;
@@ -608,7 +627,11 @@ pub async fn export_zone(
         if r.rtype == "SOA" {
             continue;
         }
-        let owner = if r.name == "@" || r.name.is_empty() { "@".to_string() } else { r.name };
+        let owner = if r.name == "@" || r.name.is_empty() {
+            "@".to_string()
+        } else {
+            r.name
+        };
         let ttl = r.ttl.map(|t| t.to_string()).unwrap_or_default();
         let view_comment = match r.view_id {
             Some(v) => format!("\t; view {v}"),
@@ -623,7 +646,10 @@ pub async fn export_zone(
 
     Ok((
         StatusCode::OK,
-        [(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; charset=utf-8",
+        )],
         out,
     )
         .into_response())
@@ -641,7 +667,10 @@ pub struct SecondaryCreate {
     tsig_key: Option<String>,
 }
 
-pub async fn list_secondaries(State(state): State<SharedState>, _auth: Authed) -> ApiResult<Response> {
+pub async fn list_secondaries(
+    State(state): State<SharedState>,
+    _auth: Authed,
+) -> ApiResult<Response> {
     let items = state.db.run(Db::list_secondaries).await?;
     Ok(ok_json(json!({ "secondary_zones": items })))
 }
@@ -707,9 +736,7 @@ pub async fn refresh_secondary(
 
     crate::dns::secondary::transfer(&state, id, &zone.name, primary, tsig_key.as_deref())
         .await
-        .map_err(|e| {
-            AppError::new(StatusCode::BAD_GATEWAY, "transfer_failed", e.to_string())
-        })?;
+        .map_err(|e| AppError::new(StatusCode::BAD_GATEWAY, "transfer_failed", e.to_string()))?;
     let zone = state.db.run(move |c| Db::zone(c, id)).await?;
     Ok(ok_json(json!({ "zone": zone })))
 }
@@ -846,8 +873,8 @@ pub async fn enable_dnssec(
         return Err(AppError::conflict("cannot sign a secondary zone"));
     }
     let nsec3 = body.map(|b| b.nsec3).unwrap_or(false);
-    let secret = crate::dns::dnssec::generate_secret()
-        .map_err(|e| AppError::internal(e.to_string()))?;
+    let secret =
+        crate::dns::dnssec::generate_secret().map_err(|e| AppError::internal(e.to_string()))?;
     // Random 8-byte salt (hex); 0 iterations per RFC 9276.
     let (salt_hex, iterations) = if nsec3 {
         let mut salt = [0u8; 8];
@@ -860,7 +887,9 @@ pub async fn enable_dnssec(
     let salt_clone = salt_hex.clone();
     state
         .db
-        .run(move |c| Db::create_dnssec_key(c, id, 13, &secret, nsec3, salt_clone.as_deref(), iterations))
+        .run(move |c| {
+            Db::create_dnssec_key(c, id, 13, &secret, nsec3, salt_clone.as_deref(), iterations)
+        })
         .await?;
     state.reload_store()?;
     dnssec_status(&state, &zone.name).await
@@ -942,9 +971,7 @@ pub async fn create_record(
     let data = req.data.trim().to_string();
     let id = state
         .db
-        .run(move |c| {
-            Db::create_record(c, zone_id, req.view_id, &name, &rtype_s, req.ttl, &data)
-        })
+        .run(move |c| Db::create_record(c, zone_id, req.view_id, &name, &rtype_s, req.ttl, &data))
         .await?;
     state.reload_store()?;
     let record = state.db.run(move |c| Db::record(c, id)).await?;
@@ -1049,9 +1076,9 @@ pub async fn put_settings(
     let mut settings = state.db.run(Db::get_settings).await?;
     if let Some(fwds) = req.forwarders {
         for f in &fwds {
-            f.addr
-                .parse::<std::net::IpAddr>()
-                .map_err(|_| validation_field("forwarders", &format!("invalid address: {}", f.addr)))?;
+            f.addr.parse::<std::net::IpAddr>().map_err(|_| {
+                validation_field("forwarders", &format!("invalid address: {}", f.addr))
+            })?;
             if matches!(f.protocol, ForwardProtocol::Tls | ForwardProtocol::Https)
                 && f.tls_name.as_deref().unwrap_or("").is_empty()
             {
@@ -1092,8 +1119,9 @@ pub async fn put_settings(
     }
     if let Some(v) = req.allow_axfr_from {
         for cidr in &v {
-            cidr.parse::<ipnet::IpNet>()
-                .map_err(|_| validation_field("allow_axfr_from", &format!("invalid CIDR: {cidr}")))?;
+            cidr.parse::<ipnet::IpNet>().map_err(|_| {
+                validation_field("allow_axfr_from", &format!("invalid CIDR: {cidr}"))
+            })?;
         }
         settings.allow_axfr_from = v;
     }
@@ -1109,7 +1137,10 @@ pub async fn put_settings(
     }
 
     let to_store = settings.clone();
-    state.db.run(move |c| Db::put_settings(c, &to_store)).await?;
+    state
+        .db
+        .run(move |c| Db::put_settings(c, &to_store))
+        .await?;
     // Apply live: rebuild the upstream resolver and reload the filter.
     state.apply_settings(settings.clone());
     Ok(ok_json(json!({ "settings": settings })))
@@ -1135,7 +1166,10 @@ pub struct BlocklistUpdate {
     enabled: Option<bool>,
 }
 
-pub async fn list_blocklists(State(state): State<SharedState>, _auth: Authed) -> ApiResult<Response> {
+pub async fn list_blocklists(
+    State(state): State<SharedState>,
+    _auth: Authed,
+) -> ApiResult<Response> {
     let lists = state.db.run(Db::list_blocklists).await?;
     Ok(ok_json(json!({ "blocklists": lists })))
 }
@@ -1145,28 +1179,148 @@ pub async fn blocklist_catalog(_auth: Authed) -> Response {
     // (name, url, format, category, description)
     let catalog = [
         // Ads + tracking (general-purpose)
-        ("StevenBlack (unified)", "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts", "hosts", "ads + tracking", "Popular unified hosts: ads + malware base list."),
-        ("Hagezi Light", "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/hosts/light.txt", "hosts", "ads + tracking", "Smallest Hagezi list — minimal breakage, low-end friendly."),
-        ("Hagezi Multi PRO", "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/hosts/pro.txt", "hosts", "ads + tracking", "Balanced, well-maintained ad/tracker/affiliate blocklist."),
-        ("Hagezi Pro++", "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/hosts/pro.plus.txt", "hosts", "ads + tracking", "Aggressive Hagezi list with extra tracking/telemetry."),
-        ("Hagezi Ultimate", "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/hosts/ultimate.txt", "hosts", "ads + tracking", "Maximum-coverage Hagezi list (expect some breakage)."),
-        ("1Hosts (Lite)", "https://raw.githubusercontent.com/badmojr/1Hosts/master/Lite/hosts.txt", "hosts", "ads + tracking", "Lightweight, low-false-positive ad/tracker list."),
-        ("1Hosts (Pro)", "https://raw.githubusercontent.com/badmojr/1Hosts/master/Pro/hosts.txt", "hosts", "ads + tracking", "Aggressive 1Hosts variant."),
-        ("OISD (small)", "https://small.oisd.nl/domains", "domains", "ads + tracking", "Curated meta-list focused on low breakage."),
-        ("OISD (big)", "https://big.oisd.nl/domains", "domains", "ads + tracking", "Large OISD meta-list combining many sources."),
-        ("AdAway", "https://adaway.org/hosts.txt", "hosts", "ads + tracking", "Mobile ad hosts (AdAway default list)."),
-        ("Peter Lowe's list", "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&showintro=0&mimetype=plaintext", "hosts", "ads + tracking", "Long-running ad/tracking server list."),
-        ("Dan Pollock (someonewhocares)", "https://someonewhocares.org/hosts/zero/hosts", "hosts", "ads + tracking", "Classic curated hosts file."),
-        ("Frogeye first-party trackers", "https://hostfiles.frogeye.fr/firstparty-trackers-hosts.txt", "hosts", "tracking", "First-party (CNAME-cloaked) tracker hosts."),
+        (
+            "StevenBlack (unified)",
+            "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts",
+            "hosts",
+            "ads + tracking",
+            "Popular unified hosts: ads + malware base list.",
+        ),
+        (
+            "Hagezi Light",
+            "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/hosts/light.txt",
+            "hosts",
+            "ads + tracking",
+            "Smallest Hagezi list — minimal breakage, low-end friendly.",
+        ),
+        (
+            "Hagezi Multi PRO",
+            "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/hosts/pro.txt",
+            "hosts",
+            "ads + tracking",
+            "Balanced, well-maintained ad/tracker/affiliate blocklist.",
+        ),
+        (
+            "Hagezi Pro++",
+            "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/hosts/pro.plus.txt",
+            "hosts",
+            "ads + tracking",
+            "Aggressive Hagezi list with extra tracking/telemetry.",
+        ),
+        (
+            "Hagezi Ultimate",
+            "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/hosts/ultimate.txt",
+            "hosts",
+            "ads + tracking",
+            "Maximum-coverage Hagezi list (expect some breakage).",
+        ),
+        (
+            "1Hosts (Lite)",
+            "https://raw.githubusercontent.com/badmojr/1Hosts/master/Lite/hosts.txt",
+            "hosts",
+            "ads + tracking",
+            "Lightweight, low-false-positive ad/tracker list.",
+        ),
+        (
+            "1Hosts (Pro)",
+            "https://raw.githubusercontent.com/badmojr/1Hosts/master/Pro/hosts.txt",
+            "hosts",
+            "ads + tracking",
+            "Aggressive 1Hosts variant.",
+        ),
+        (
+            "OISD (small)",
+            "https://small.oisd.nl/domains",
+            "domains",
+            "ads + tracking",
+            "Curated meta-list focused on low breakage.",
+        ),
+        (
+            "OISD (big)",
+            "https://big.oisd.nl/domains",
+            "domains",
+            "ads + tracking",
+            "Large OISD meta-list combining many sources.",
+        ),
+        (
+            "AdAway",
+            "https://adaway.org/hosts.txt",
+            "hosts",
+            "ads + tracking",
+            "Mobile ad hosts (AdAway default list).",
+        ),
+        (
+            "Peter Lowe's list",
+            "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&showintro=0&mimetype=plaintext",
+            "hosts",
+            "ads + tracking",
+            "Long-running ad/tracking server list.",
+        ),
+        (
+            "Dan Pollock (someonewhocares)",
+            "https://someonewhocares.org/hosts/zero/hosts",
+            "hosts",
+            "ads + tracking",
+            "Classic curated hosts file.",
+        ),
+        (
+            "Frogeye first-party trackers",
+            "https://hostfiles.frogeye.fr/firstparty-trackers-hosts.txt",
+            "hosts",
+            "tracking",
+            "First-party (CNAME-cloaked) tracker hosts.",
+        ),
         // Malware / phishing / threat intel
-        ("Hagezi TIF", "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/hosts/tif.txt", "hosts", "malware + phishing", "Hagezi Threat Intelligence Feed: malware, phishing, scams."),
-        ("URLhaus malware", "https://urlhaus.abuse.ch/downloads/hostfile/", "hosts", "malware", "abuse.ch malware/payload distribution hosts."),
-        ("Phishing Army (extended)", "https://phishing.army/download/phishing_army_blocklist_extended.txt", "domains", "phishing", "Phishing domains, extended edition."),
-        ("DigitalSide threat-intel", "https://osint.digitalside.it/Threat-Intel/lists/latestdomains.txt", "domains", "malware", "Recently-seen malware/threat domains (OSINT)."),
+        (
+            "Hagezi TIF",
+            "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/hosts/tif.txt",
+            "hosts",
+            "malware + phishing",
+            "Hagezi Threat Intelligence Feed: malware, phishing, scams.",
+        ),
+        (
+            "URLhaus malware",
+            "https://urlhaus.abuse.ch/downloads/hostfile/",
+            "hosts",
+            "malware",
+            "abuse.ch malware/payload distribution hosts.",
+        ),
+        (
+            "Phishing Army (extended)",
+            "https://phishing.army/download/phishing_army_blocklist_extended.txt",
+            "domains",
+            "phishing",
+            "Phishing domains, extended edition.",
+        ),
+        (
+            "DigitalSide threat-intel",
+            "https://osint.digitalside.it/Threat-Intel/lists/latestdomains.txt",
+            "domains",
+            "malware",
+            "Recently-seen malware/threat domains (OSINT).",
+        ),
         // Privacy / telemetry / misc
-        ("WindowsSpyBlocker", "https://raw.githubusercontent.com/crazy-max/WindowsSpyBlocker/master/data/hosts/spy.txt", "hosts", "telemetry", "Windows telemetry / spying hosts."),
-        ("NoCoin (cryptominers)", "https://raw.githubusercontent.com/hoshsadiq/adblock-nocoin-list/master/hosts.txt", "hosts", "cryptominers", "Block in-browser cryptocurrency miners."),
-        ("OISD NSFW", "https://nsfw.oisd.nl/domains", "domains", "adult", "Adult / NSFW domains (optional family filter)."),
+        (
+            "WindowsSpyBlocker",
+            "https://raw.githubusercontent.com/crazy-max/WindowsSpyBlocker/master/data/hosts/spy.txt",
+            "hosts",
+            "telemetry",
+            "Windows telemetry / spying hosts.",
+        ),
+        (
+            "NoCoin (cryptominers)",
+            "https://raw.githubusercontent.com/hoshsadiq/adblock-nocoin-list/master/hosts.txt",
+            "hosts",
+            "cryptominers",
+            "Block in-browser cryptocurrency miners.",
+        ),
+        (
+            "OISD NSFW",
+            "https://nsfw.oisd.nl/domains",
+            "domains",
+            "adult",
+            "Adult / NSFW domains (optional family filter).",
+        ),
     ];
     let items: Vec<_> = catalog
         .iter()
@@ -1300,7 +1454,10 @@ pub struct BlockRuleCreate {
     comment: Option<String>,
 }
 
-pub async fn list_block_rules(State(state): State<SharedState>, _auth: Authed) -> ApiResult<Response> {
+pub async fn list_block_rules(
+    State(state): State<SharedState>,
+    _auth: Authed,
+) -> ApiResult<Response> {
     let rules = state.db.run(Db::list_block_rules).await?;
     Ok(ok_json(json!({ "rules": rules })))
 }
@@ -1425,7 +1582,10 @@ pub struct ConditionalUpdate {
 
 fn validate_forwarders(forwarders: &[Forwarder]) -> Result<(), AppError> {
     if forwarders.is_empty() {
-        return Err(validation_field("forwarders", "at least one forwarder required"));
+        return Err(validation_field(
+            "forwarders",
+            "at least one forwarder required",
+        ));
     }
     for f in forwarders {
         f.addr
@@ -1443,7 +1603,10 @@ fn validate_forwarders(forwarders: &[Forwarder]) -> Result<(), AppError> {
     Ok(())
 }
 
-pub async fn list_conditional(State(state): State<SharedState>, _auth: Authed) -> ApiResult<Response> {
+pub async fn list_conditional(
+    State(state): State<SharedState>,
+    _auth: Authed,
+) -> ApiResult<Response> {
     let items = state.db.run(Db::list_conditional_forwards).await?;
     Ok(ok_json(json!({ "conditional_forwards": items })))
 }
@@ -1461,7 +1624,10 @@ pub async fn create_conditional(
         .run(move |c| Db::create_conditional_forward(c, &domain, &fwds))
         .await?;
     state.reload_conditional()?;
-    let item = state.db.run(move |c| Db::conditional_forward(c, id)).await?;
+    let item = state
+        .db
+        .run(move |c| Db::conditional_forward(c, id))
+        .await?;
     Ok(created_json(json!({ "conditional_forward": item })))
 }
 
@@ -1480,7 +1646,10 @@ pub async fn update_conditional(
         .run(move |c| Db::update_conditional_forward(c, id, fwds.as_deref(), req.enabled))
         .await?;
     state.reload_conditional()?;
-    let item = state.db.run(move |c| Db::conditional_forward(c, id)).await?;
+    let item = state
+        .db
+        .run(move |c| Db::conditional_forward(c, id))
+        .await?;
     Ok(ok_json(json!({ "conditional_forward": item })))
 }
 
@@ -1531,10 +1700,16 @@ pub async fn create_dyndns_token(
     }
     let username = req.username.trim().to_string();
     if username.is_empty() || username.len() > 64 || username.contains(':') {
-        return Err(validation_field("username", "must be 1-64 chars and contain no colon"));
+        return Err(validation_field(
+            "username",
+            "must be 1-64 chars and contain no colon",
+        ));
     }
     if req.hostnames.is_empty() {
-        return Err(validation_field("hostnames", "at least one hostname is required"));
+        return Err(validation_field(
+            "hostnames",
+            "at least one hostname is required",
+        ));
     }
 
     // Each hostname must be a valid FQDN covered by a local zone.
@@ -1546,7 +1721,10 @@ pub async fn create_dyndns_token(
             continue;
         }
         if hickory_proto::rr::Name::from_utf8(format!("{host}.")).is_err() {
-            return Err(validation_field("hostnames", &format!("invalid hostname: {host}")));
+            return Err(validation_field(
+                "hostnames",
+                &format!("invalid hostname: {host}"),
+            ));
         }
         let covered = zones.iter().any(|z| {
             let zn = z.name.trim_end_matches('.').to_ascii_lowercase();
@@ -1561,7 +1739,10 @@ pub async fn create_dyndns_token(
         hostnames.push(host);
     }
     if hostnames.is_empty() {
-        return Err(validation_field("hostnames", "at least one hostname is required"));
+        return Err(validation_field(
+            "hostnames",
+            "at least one hostname is required",
+        ));
     }
 
     if let Some(vid) = req.view_id {
@@ -1578,10 +1759,15 @@ pub async fn create_dyndns_token(
         .await?
         .is_some()
     {
-        return Err(AppError::conflict("a token with this username already exists"));
+        return Err(AppError::conflict(
+            "a token with this username already exists",
+        ));
     }
 
-    let secret = req.secret.filter(|s| !s.trim().is_empty()).unwrap_or_else(random_token);
+    let secret = req
+        .secret
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(random_token);
     let secret_hash = hash_password(&secret)?;
     let ttl = req.ttl.unwrap_or(60).max(1);
     let view_id = req.view_id;
@@ -1591,7 +1777,15 @@ pub async fn create_dyndns_token(
     let id = state
         .db
         .run(move |c| {
-            Db::create_dyndns_token(c, &label_db, &username_db, &secret_hash, &hostnames, view_id, ttl)
+            Db::create_dyndns_token(
+                c,
+                &label_db,
+                &username_db,
+                &secret_hash,
+                &hostnames,
+                view_id,
+                ttl,
+            )
         })
         .await?;
 
@@ -1610,7 +1804,10 @@ pub async fn delete_dyndns_token(
     Path(id): Path<i64>,
     _auth: Authed,
 ) -> ApiResult<Response> {
-    state.db.run(move |c| Db::delete_dyndns_token(c, id)).await?;
+    state
+        .db
+        .run(move |c| Db::delete_dyndns_token(c, id))
+        .await?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -1632,10 +1829,17 @@ fn validate_rewrite_target(target: &str) -> Result<(), AppError> {
     if t.parse::<std::net::IpAddr>().is_ok() {
         return Ok(());
     }
-    let fqdn = if t.ends_with('.') { t.to_string() } else { format!("{t}.") };
+    let fqdn = if t.ends_with('.') {
+        t.to_string()
+    } else {
+        format!("{t}.")
+    };
     if hickory_proto::rr::Name::from_utf8(&fqdn).is_ok() {
         Ok(())
     } else {
-        Err(validation_field("target", "must be an IP address or hostname"))
+        Err(validation_field(
+            "target",
+            "must be an IP address or hostname",
+        ))
     }
 }

@@ -88,7 +88,7 @@ impl ZoneStore {
             .map_err(Into::into)
     }
 
-    fn build_from(conn: &rusqlite::Connection) -> Self {
+    fn build_from(conn: &mut diesel::sqlite::SqliteConnection) -> Self {
         let mut store = ZoneStore::default();
 
         // Views, sorted by priority ascending (lowest number wins first).
@@ -145,7 +145,9 @@ impl ZoneStore {
                     let nsec3_params = if nsec3 {
                         let salt = salt_hex
                             .as_deref()
-                            .and_then(|h| data_encoding::HEXLOWER_PERMISSIVE.decode(h.as_bytes()).ok())
+                            .and_then(|h| {
+                                data_encoding::HEXLOWER_PERMISSIVE.decode(h.as_bytes()).ok()
+                            })
                             .unwrap_or_default();
                         Some(Nsec3Params { salt, iterations })
                     } else {
@@ -206,7 +208,9 @@ impl ZoneStore {
         }
 
         // Longest apex first for longest-suffix matching.
-        store.zones.sort_by_key(|z| std::cmp::Reverse(z.label_count));
+        store
+            .zones
+            .sort_by_key(|z| std::cmp::Reverse(z.label_count));
         store
     }
 
@@ -225,11 +229,7 @@ impl ZoneStore {
 
     /// Resolve records at one owner name for a view and type, applying
     /// split-horizon override (view-specific hides all-views).
-    fn resolve(
-        recs: &[StoredRecord],
-        view_id: i64,
-        rtype: RecordType,
-    ) -> Vec<&StoredRecord> {
+    fn resolve(recs: &[StoredRecord], view_id: i64, rtype: RecordType) -> Vec<&StoredRecord> {
         let specific: Vec<&StoredRecord> = recs
             .iter()
             .filter(|r| r.rtype == rtype && r.view_id == Some(view_id))
@@ -352,7 +352,9 @@ impl ZoneStore {
                     break;
                 }
                 let tkey = name_key(&target);
-                let Some(trecs) = Self::records_at(zone, &tkey) else { break };
+                let Some(trecs) = Self::records_at(zone, &tkey) else {
+                    break;
+                };
                 let direct = Self::resolve(trecs, view_id, qtype);
                 if !direct.is_empty() {
                     for r in direct {
@@ -545,7 +547,10 @@ mod tests {
         let r = s.lookup(&qname("www.home.lan."), RecordType::A, ip("8.8.8.8"));
         assert_eq!(r.outcome, Outcome::Authoritative);
         // Expect the CNAME plus the chased A record.
-        let has_cname = r.answers.iter().any(|a| a.record_type() == RecordType::CNAME);
+        let has_cname = r
+            .answers
+            .iter()
+            .any(|a| a.record_type() == RecordType::CNAME);
         let has_a = r
             .answers
             .iter()
@@ -564,7 +569,11 @@ mod tests {
     #[test]
     fn wildcard_matches_and_uses_query_name() {
         let s = setup();
-        let r = s.lookup(&qname("anything.dyn.home.lan."), RecordType::A, ip("8.8.8.8"));
+        let r = s.lookup(
+            &qname("anything.dyn.home.lan."),
+            RecordType::A,
+            ip("8.8.8.8"),
+        );
         assert_eq!(r.outcome, Outcome::Authoritative);
         assert_eq!(r.answers.len(), 1);
         assert_eq!(r.answers[0].data.to_string(), "10.9.9.9");

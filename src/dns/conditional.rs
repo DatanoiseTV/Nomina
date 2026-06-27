@@ -28,7 +28,7 @@ impl ConditionalSet {
             .map_err(Into::into)
     }
 
-    fn build_from(conn: &rusqlite::Connection, settings: &Settings) -> Self {
+    fn build_from(conn: &mut diesel::sqlite::SqliteConnection, settings: &Settings) -> Self {
         let mut rules = Vec::new();
         for cf in Db::list_conditional_forwards(conn).unwrap_or_default() {
             if !cf.enabled || cf.forwarders.is_empty() {

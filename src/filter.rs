@@ -50,7 +50,7 @@ impl FilterSet {
             .map_err(Into::into)
     }
 
-    fn build_from(conn: &rusqlite::Connection, blocking_enabled: bool) -> Self {
+    fn build_from(conn: &mut diesel::sqlite::SqliteConnection, blocking_enabled: bool) -> Self {
         let mut set = FilterSet {
             blocking_enabled,
             ..Default::default()
@@ -111,10 +111,11 @@ impl FilterSet {
             return Decision::Allow;
         }
         if self.blocking_enabled
-            && (self.blocked.contains(name) || self.deny_rules.iter().any(|p| domain_covers(p, name)))
-            {
-                return Decision::Block;
-            }
+            && (self.blocked.contains(name)
+                || self.deny_rules.iter().any(|p| domain_covers(p, name)))
+        {
+            return Decision::Block;
+        }
         Decision::Pass
     }
 

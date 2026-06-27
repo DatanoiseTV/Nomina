@@ -6,9 +6,9 @@
 
 use std::collections::BTreeMap;
 
+use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use serde_json::json;
 
 /// An error returned from a web handler, carrying an HTTP status, a stable
@@ -37,7 +37,11 @@ impl AppError {
     }
 
     pub fn unauthorized() -> Self {
-        Self::new(StatusCode::UNAUTHORIZED, "unauthorized", "Authentication required")
+        Self::new(
+            StatusCode::UNAUTHORIZED,
+            "unauthorized",
+            "Authentication required",
+        )
     }
 
     pub fn forbidden(msg: impl Into<String>) -> Self {
@@ -93,13 +97,20 @@ impl From<anyhow::Error> for AppError {
     }
 }
 
-impl From<rusqlite::Error> for AppError {
-    fn from(e: rusqlite::Error) -> Self {
-        // UNIQUE constraint violations map to 409.
-        if let rusqlite::Error::SqliteFailure(f, _) = &e {
-            if f.code == rusqlite::ErrorCode::ConstraintViolation {
-                return AppError::conflict("Resource already exists or violates a constraint");
-            }
+impl From<diesel::result::Error> for AppError {
+    fn from(e: diesel::result::Error) -> Self {
+        use diesel::result::{DatabaseErrorKind, Error};
+        // Any constraint violation (unique, FK, check, not-null) maps to 409,
+        // matching the previous rusqlite ConstraintViolation handling.
+        if let Error::DatabaseError(
+            DatabaseErrorKind::UniqueViolation
+            | DatabaseErrorKind::ForeignKeyViolation
+            | DatabaseErrorKind::CheckViolation
+            | DatabaseErrorKind::NotNullViolation,
+            _,
+        ) = &e
+        {
+            return AppError::conflict("Resource already exists or violates a constraint");
         }
         AppError::internal(e.to_string())
     }
