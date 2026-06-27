@@ -182,4 +182,17 @@ export const api = {
   listDyndnsTokens: () => request("GET", "/api/dyndns/tokens"),
   createDyndnsToken: (body) => request("POST", "/api/dyndns/tokens", body),
   deleteDyndnsToken: (id) => request("DELETE", `/api/dyndns/tokens/${id}`),
+
+  // ---- DHCP ----
+  listDhcpScopes: () => request("GET", "/api/dhcp/scopes"),
+  getDhcpScope: (id) => request("GET", `/api/dhcp/scopes/${id}`),
+  createDhcpScope: (body) => request("POST", "/api/dhcp/scopes", body),
+  updateDhcpScope: (id, body) => request("PUT", `/api/dhcp/scopes/${id}`, body),
+  deleteDhcpScope: (id) => request("DELETE", `/api/dhcp/scopes/${id}`),
+  createDhcpReservation: (scopeId, body) => request("POST", `/api/dhcp/scopes/${scopeId}/reservations`, body),
+  updateDhcpReservation: (id, body) => request("PUT", `/api/dhcp/reservations/${id}`, body),
+  deleteDhcpReservation: (id) => request("DELETE", `/api/dhcp/reservations/${id}`),
+  listDhcpLeases: (scopeId) => request("GET", `/api/dhcp/leases${scopeId ? "?scope_id=" + scopeId : ""}`),
+  deleteDhcpLease: (id) => request("DELETE", `/api/dhcp/leases/${id}`),
+  dhcpOptionCatalog: (family) => request("GET", `/api/dhcp/option-catalog?family=${family || "v4"}`),
 };

@@ -16,6 +16,7 @@ import { renderRules } from "./views/rules.js";
 import { renderRewrites } from "./views/rewrites.js";
 import { renderConditional } from "./views/conditional.js";
 import { renderDyndns } from "./views/dyndns.js";
+import { renderDhcp } from "./views/dhcp.js";
 import { renderQueries } from "./views/queries.js";
 
 // ---- Theme -----------------------------------------------------------------
@@ -68,6 +69,7 @@ const routes = [
   { re: /^\/rewrites$/, view: renderRewrites, nav: "rewrites", title: "Rewrites" },
   { re: /^\/conditional$/, view: renderConditional, nav: "conditional", title: "Conditional forwarding" },
   { re: /^\/dyndns$/, view: renderDyndns, nav: "dyndns", title: "DynDNS" },
+  { re: /^\/dhcp$/, view: renderDhcp, nav: "dhcp", title: "DHCP" },
   { re: /^\/settings$/, view: renderSettings, nav: "settings", title: "Settings" },
   { re: /^\/account$/, view: renderAccount, nav: "account", title: "Account" },
 ];
@@ -88,6 +90,8 @@ const NAV_ITEMS = [
   { id: "conditional", label: "Conditional", href: "#/conditional", icon: "shuffle" },
   { section: "Dynamic DNS" },
   { id: "dyndns", label: "DynDNS", href: "#/dyndns", icon: "link" },
+  { section: "DHCP" },
+  { id: "dhcp", label: "DHCP", href: "#/dhcp", icon: "link" },
   { section: "System" },
   { id: "settings", label: "Settings", href: "#/settings", icon: "settings" },
   { id: "account", label: "Account", href: "#/account", icon: "account" },

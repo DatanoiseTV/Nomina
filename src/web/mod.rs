@@ -142,6 +142,30 @@ pub fn router(state: SharedState) -> Router {
             "/api/dyndns/tokens/{id}",
             axum::routing::delete(api::delete_dyndns_token),
         )
+        .route(
+            "/api/dhcp/scopes",
+            get(api::list_dhcp_scopes).post(api::create_dhcp_scope),
+        )
+        .route(
+            "/api/dhcp/scopes/{id}",
+            get(api::get_dhcp_scope)
+                .put(api::update_dhcp_scope)
+                .delete(api::delete_dhcp_scope),
+        )
+        .route(
+            "/api/dhcp/scopes/{id}/reservations",
+            post(api::create_dhcp_reservation),
+        )
+        .route(
+            "/api/dhcp/reservations/{id}",
+            put(api::update_dhcp_reservation).delete(api::delete_dhcp_reservation),
+        )
+        .route("/api/dhcp/leases", get(api::list_dhcp_leases))
+        .route(
+            "/api/dhcp/leases/{id}",
+            axum::routing::delete(api::delete_dhcp_lease),
+        )
+        .route("/api/dhcp/option-catalog", get(api::dhcp_option_catalog))
         // DynDNS2 update endpoint. Authenticated by per-token HTTP Basic auth;
         // intentionally outside the session/CSRF gate above.
         .route("/nic/update", get(dyndns::nic_update))

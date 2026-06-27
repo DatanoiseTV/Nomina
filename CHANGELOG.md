@@ -9,6 +9,13 @@ All notable changes to Nomina are documented here. The format follows
 Initial public release. A single self-contained binary.
 
 ### Highlights
+- **DHCP server (IPv4 + IPv6)** — scopes with address pools, static reservations
+  (MAC/DUID), and the full option set plus arbitrary user-defined options
+  (typed: ip/ip-list/u8/u16/u32/bool/text/hex). Leases persist with an expiry
+  sweeper; on grant, leases can auto-register A/AAAA (and PTR) in DNS. DHCPv4
+  DISCOVER/REQUEST/RELEASE/DECLINE/INFORM and DHCPv6 SOLICIT/REQUEST/RENEW are
+  served on UDP 67/547 (off unless `[dhcp]` is configured). Managed from a web UI
+  (scopes, reservations, live leases, option editor) and `/api/dhcp/*`.
 - **GeoDNS, load balancing & ASN filtering** — views can now match clients by
   country/continent/ASN (geo-targeted answers) using optional MaxMind GeoLite2
   databases (`[geo]` config); `load_balance` (round-robin/random) spreads

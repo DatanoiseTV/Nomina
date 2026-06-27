@@ -388,6 +388,32 @@ Response is `text/plain`, one line per hostname:
 `911` (server error). Updates upsert the A/AAAA record in the token's view
 (default: all views) and bump the zone serial so secondaries/AXFR/DNSSEC follow.
 
+### DHCP
+
+DHCPv4/DHCPv6 scopes, static reservations, leases, and options. The DHCP server
+only runs when `[dhcp]` listen addresses are configured; scope/reservation
+changes take effect immediately (the serving path reads scopes live).
+
+`DhcpOption`: `{ "code": u16, "name"?: string, "value": string, "kind": ip |
+ip_list | u8 | u16 | u32 | bool | text | hex }`. Any code is allowed; the catalog
+supplies names/kinds for well-known codes. Option values are validated (encoded
+to wire bytes) on save — bad values return `422`.
+
+`DhcpScope`: `{ id, name, enabled, family: "v4"|"v6", subnet (CIDR), range_start,
+range_end, lease_secs, dns_register, dns_zone?, server_id?, options: [DhcpOption],
+created_at }`.
+
+- `GET /api/dhcp/scopes` → `200 { "scopes": [DhcpScope] }`
+- `POST /api/dhcp/scopes` body `DhcpScope` (no id) → `201 { "scope": ... }`
+- `GET /api/dhcp/scopes/:id` → `200 { "scope": DhcpScope, "reservations": [DhcpReservation] }`
+- `PUT /api/dhcp/scopes/:id` (full object; family is immutable) → `200 { "scope": ... }`
+- `DELETE /api/dhcp/scopes/:id` → `204` (cascades reservations + leases)
+- `POST /api/dhcp/scopes/:id/reservations` body `{ identifier (MAC/DUID), ip, hostname?, options? }` → `201 { "id" }`
+- `PUT /api/dhcp/reservations/:id` / `DELETE /api/dhcp/reservations/:id`
+- `GET /api/dhcp/leases?scope_id=` → `200 { "leases": [DhcpLease] }`
+- `DELETE /api/dhcp/leases/:id` → `204`
+- `GET /api/dhcp/option-catalog?family=v4|v6` → `200 { "options": [{ code, name, kind }] }`
+
 ### Zone import
 
 `POST /api/zones/:id/import` body `{ "zonefile": "<BIND master file text>", "replace"?: bool }`

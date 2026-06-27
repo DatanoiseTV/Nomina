@@ -1869,6 +1869,290 @@ pub async fn delete_dyndns_token(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
+// ---------------------------------------------------------------------------
+// DHCP
+// ---------------------------------------------------------------------------
+
+fn default_lease_secs() -> u32 {
+    86400
+}
+
+#[derive(Deserialize)]
+pub struct DhcpScopeInput {
+    name: String,
+    #[serde(default = "default_true_bool")]
+    enabled: bool,
+    family: IpFamily,
+    subnet: String,
+    range_start: String,
+    range_end: String,
+    #[serde(default = "default_lease_secs")]
+    lease_secs: u32,
+    #[serde(default)]
+    dns_register: bool,
+    #[serde(default)]
+    dns_zone: Option<String>,
+    #[serde(default)]
+    server_id: Option<String>,
+    #[serde(default)]
+    options: Vec<DhcpOption>,
+}
+
+fn default_true_bool() -> bool {
+    true
+}
+
+#[derive(Deserialize)]
+pub struct DhcpReservationInput {
+    identifier: String,
+    ip: String,
+    #[serde(default)]
+    hostname: Option<String>,
+    #[serde(default)]
+    options: Vec<DhcpOption>,
+}
+
+/// Validate every option encodes to wire bytes (rejects bad values early).
+fn validate_dhcp_options(options: &[DhcpOption]) -> Result<(), AppError> {
+    for o in options {
+        crate::dhcp::options::encode_option(o)
+            .map_err(|e| validation_field("options", &format!("option {}: {e}", o.code)))?;
+    }
+    Ok(())
+}
+
+/// Validate a scope's addressing (CIDR + pool bounds + server id for v4).
+fn validate_scope(input: &DhcpScopeInput) -> Result<(), AppError> {
+    input
+        .subnet
+        .parse::<IpNet>()
+        .map_err(|_| validation_field("subnet", "invalid CIDR"))?;
+    let fam_ok = |s: &str| -> bool {
+        match s.parse::<std::net::IpAddr>() {
+            Ok(ip) => (ip.is_ipv4() && input.family == IpFamily::V4)
+                || (ip.is_ipv6() && input.family == IpFamily::V6),
+            Err(_) => false,
+        }
+    };
+    if !fam_ok(&input.range_start) {
+        return Err(validation_field("range_start", "invalid address for family"));
+    }
+    if !fam_ok(&input.range_end) {
+        return Err(validation_field("range_end", "invalid address for family"));
+    }
+    if input.family == IpFamily::V4 {
+        if let Some(sid) = &input.server_id {
+            if !sid.is_empty() && sid.parse::<std::net::Ipv4Addr>().is_err() {
+                return Err(validation_field("server_id", "invalid IPv4 address"));
+            }
+        }
+    }
+    validate_dhcp_options(&input.options)
+}
+
+pub async fn list_dhcp_scopes(State(state): State<SharedState>, _auth: Authed) -> ApiResult<Response> {
+    let scopes = state.db.run(Db::list_dhcp_scopes).await?;
+    Ok(ok_json(json!({ "scopes": scopes })))
+}
+
+pub async fn get_dhcp_scope(
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+    _auth: Authed,
+) -> ApiResult<Response> {
+    let scope = state
+        .db
+        .run(move |c| Db::dhcp_scope(c, id))
+        .await?
+        .ok_or_else(|| AppError::not_found("scope not found"))?;
+    let reservations = state.db.run(move |c| Db::list_dhcp_reservations(c, id)).await?;
+    Ok(ok_json(json!({ "scope": scope, "reservations": reservations })))
+}
+
+pub async fn create_dhcp_scope(
+    State(state): State<SharedState>,
+    _auth: Authed,
+    Json(req): Json<DhcpScopeInput>,
+) -> ApiResult<Response> {
+    if req.name.trim().is_empty() {
+        return Err(validation_field("name", "must not be empty"));
+    }
+    validate_scope(&req)?;
+    let id = state
+        .db
+        .run(move |c| {
+            Db::create_dhcp_scope(
+                c,
+                req.name.trim(),
+                req.enabled,
+                req.family,
+                &req.subnet,
+                &req.range_start,
+                &req.range_end,
+                req.lease_secs,
+                req.dns_register,
+                req.dns_zone.as_deref(),
+                req.server_id.as_deref(),
+                &req.options,
+            )
+        })
+        .await?;
+    let scope = state.db.run(move |c| Db::dhcp_scope(c, id)).await?;
+    Ok(created_json(json!({ "scope": scope })))
+}
+
+pub async fn update_dhcp_scope(
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+    _auth: Authed,
+    Json(req): Json<DhcpScopeInput>,
+) -> ApiResult<Response> {
+    if req.name.trim().is_empty() {
+        return Err(validation_field("name", "must not be empty"));
+    }
+    validate_scope(&req)?;
+    state
+        .db
+        .run(move |c| {
+            Db::update_dhcp_scope(
+                c,
+                id,
+                Some(req.name.trim()),
+                Some(req.enabled),
+                Some(&req.subnet),
+                Some(&req.range_start),
+                Some(&req.range_end),
+                Some(req.lease_secs),
+                Some(req.dns_register),
+                Some(req.dns_zone.as_deref()),
+                Some(req.server_id.as_deref()),
+                Some(&req.options),
+            )
+        })
+        .await?;
+    let scope = state.db.run(move |c| Db::dhcp_scope(c, id)).await?;
+    Ok(ok_json(json!({ "scope": scope })))
+}
+
+pub async fn delete_dhcp_scope(
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+    _auth: Authed,
+) -> ApiResult<Response> {
+    state.db.run(move |c| Db::delete_dhcp_scope(c, id)).await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+pub async fn create_dhcp_reservation(
+    State(state): State<SharedState>,
+    Path(scope_id): Path<i64>,
+    _auth: Authed,
+    Json(req): Json<DhcpReservationInput>,
+) -> ApiResult<Response> {
+    if req.identifier.trim().is_empty() {
+        return Err(validation_field("identifier", "must not be empty"));
+    }
+    if req.ip.parse::<std::net::IpAddr>().is_err() {
+        return Err(validation_field("ip", "invalid IP address"));
+    }
+    validate_dhcp_options(&req.options)?;
+    let ident = req.identifier.trim().to_ascii_lowercase();
+    let id = state
+        .db
+        .run(move |c| {
+            Db::create_dhcp_reservation(
+                c,
+                scope_id,
+                &ident,
+                req.ip.trim(),
+                req.hostname.as_deref(),
+                &req.options,
+            )
+        })
+        .await?;
+    Ok(created_json(json!({ "id": id })))
+}
+
+pub async fn update_dhcp_reservation(
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+    _auth: Authed,
+    Json(req): Json<DhcpReservationInput>,
+) -> ApiResult<Response> {
+    if req.ip.parse::<std::net::IpAddr>().is_err() {
+        return Err(validation_field("ip", "invalid IP address"));
+    }
+    validate_dhcp_options(&req.options)?;
+    let ident = req.identifier.trim().to_ascii_lowercase();
+    state
+        .db
+        .run(move |c| {
+            Db::update_dhcp_reservation(
+                c,
+                id,
+                Some(&ident),
+                Some(req.ip.trim()),
+                Some(req.hostname.as_deref()),
+                Some(&req.options),
+            )
+        })
+        .await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+pub async fn delete_dhcp_reservation(
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+    _auth: Authed,
+) -> ApiResult<Response> {
+    state.db.run(move |c| Db::delete_dhcp_reservation(c, id)).await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+#[derive(Deserialize)]
+pub struct LeaseQuery {
+    scope_id: Option<i64>,
+}
+
+pub async fn list_dhcp_leases(
+    State(state): State<SharedState>,
+    _auth: Authed,
+    Query(q): Query<LeaseQuery>,
+) -> ApiResult<Response> {
+    let scope_id = q.scope_id;
+    let leases = state.db.run(move |c| Db::list_dhcp_leases(c, scope_id)).await?;
+    Ok(ok_json(json!({ "leases": leases })))
+}
+
+pub async fn delete_dhcp_lease(
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+    _auth: Authed,
+) -> ApiResult<Response> {
+    state.db.run(move |c| Db::delete_dhcp_lease(c, id)).await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+#[derive(Deserialize)]
+pub struct CatalogQuery {
+    family: Option<String>,
+}
+
+/// The well-known DHCP option catalog (names + kinds) so the UI can offer named
+/// options. Arbitrary codes are still allowed in scope/reservation options.
+pub async fn dhcp_option_catalog(_auth: Authed, Query(q): Query<CatalogQuery>) -> Response {
+    let cat = if q.family.as_deref() == Some("v6") {
+        crate::dhcp::options::v6_catalog()
+    } else {
+        crate::dhcp::options::v4_catalog()
+    };
+    let options: Vec<_> = cat
+        .iter()
+        .map(|d| json!({ "code": d.code, "name": d.name, "kind": d.kind }))
+        .collect();
+    ok_json(json!({ "options": options }))
+}
+
 fn normalize_domain(domain: &str) -> Result<String, AppError> {
     let d = domain.trim().trim_end_matches('.').to_ascii_lowercase();
     if d.is_empty() {

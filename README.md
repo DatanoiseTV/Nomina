@@ -60,6 +60,9 @@ one static binary with the database and web UI embedded.
   secondary (SOA-driven refresh), optional **TSIG**; import/export BIND files.
 - **DynDNS** — DynDNS2 `/nic/update` endpoint for routers/clients (ddclient,
   FRITZ!Box, UniFi, No-IP), with per-client hostname-scoped tokens.
+- **DHCP (IPv4 + IPv6)** — scopes, pools, static reservations (MAC/DUID), the
+  full option set plus arbitrary user-defined options, persistent leases, and
+  optional lease → DNS auto-registration (A/AAAA + PTR). Off until configured.
 - **Observability** — dashboard (req/s, latency, cache hit-rate, per-outcome and
   DNSSEC-failure counts), a searchable request log, and Prometheus `/metrics`.
 - **Secure & private by default** — argon2 logins, server-side sessions, CSRF,
@@ -71,7 +74,7 @@ one static binary with the database and web UI embedded.
 A fair, conservative snapshot — features change, so check each project's docs.
 Nomina's distinguishing trait is the *combination* below in one Rust binary.
 [Technitium DNS](https://technitium.com/dns/) is the closest single-app
-comparison and is broader and more mature (it also does DHCP).
+comparison and is more mature and battle-tested.
 
 | Capability | Nomina | Pi-hole | AdGuard Home | Technitium | BIND 9 | CoreDNS |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|
@@ -86,7 +89,7 @@ comparison and is broader and more mature (it also does DHCP).
 | DynDNS HTTP update | ✅ | ❌ | ❌ | partial⁵ | RFC 2136⁵ | ❌ |
 | Built-in web UI | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
 | Single self-contained binary | ✅ | ❌ | ✅ | ❌⁶ | ❌ | ✅ |
-| DHCP server | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| DHCP server (v4 + v6) | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
 | Language | Rust | C/PHP | Go | C#/.NET | C | Go |
 
 <sub>¹ local records/rewrites, not full zones/DNSSEC-signing/AXFR. ² client-specific
@@ -94,8 +97,8 @@ rules, not CIDR views. ³ needs a separate proxy. ⁴ BIND 9.18+. ⁵ Technitium
 its API; BIND via RFC 2136 — neither is the HTTP DynDNS2 protocol routers speak.
 ⁶ runs on .NET.</sub>
 
-**Not (yet) in Nomina:** no DHCP, and it's young — it lacks the maturity and
-scale hardening of BIND/Technitium. For a pure recursor, Unbound is lighter; for
+**Caveat:** Nomina is young — it lacks the maturity and scale hardening of
+BIND/Technitium. For a pure recursor, Unbound is lighter; for
 authoritative-at-scale, Knot/NSD are battle-tested.
 
 ## Quick start
@@ -134,7 +137,8 @@ process. The JSON API contract is the source of truth at
 
 ## Roadmap
 
-DHCP server · native packages (deb/rpm) and a container image · clustering / HA.
+Native packages (deb/rpm) and a container image · clustering / HA · DHCP relay
+and PXE conveniences.
 
 ## Contributing
 
