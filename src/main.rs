@@ -11,6 +11,7 @@ mod dns;
 mod error;
 mod filter;
 mod models;
+mod net;
 mod privileges;
 mod schema;
 mod state;
@@ -24,7 +25,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::Parser;
-use tokio::net::TcpListener;
 
 use crate::config::Config;
 use crate::db::Db;
@@ -249,8 +249,7 @@ async fn main() -> anyhow::Result<()> {
         None
     } else {
         Some(
-            TcpListener::bind(config.web.listen)
-                .await
+            net::bind_tcp(config.web.listen)
                 .map_err(|e| anyhow::anyhow!("binding web {}: {e}", config.web.listen))?,
         )
     };
@@ -258,9 +257,8 @@ async fn main() -> anyhow::Result<()> {
     let mut doh_listeners = Vec::new();
     if doh_tls.is_some() {
         for addr in &config.dns.doh_listen {
-            let listener = TcpListener::bind(addr)
-                .await
-                .map_err(|e| anyhow::anyhow!("binding DoH {addr}: {e}"))?;
+            let listener =
+                net::bind_tcp(*addr).map_err(|e| anyhow::anyhow!("binding DoH {addr}: {e}"))?;
             doh_listeners.push((*addr, listener));
         }
     }

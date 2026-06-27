@@ -84,6 +84,8 @@ Rolling query statistics since start.
   "dangerous": 7,
   "dnssec_failures": 3,
   "dnssec_validate": true,
+  "ipv4": 8000,
+  "ipv6": 2456,
   "by_qtype": { "A": 6000, "AAAA": 3000, "PTR": 400 },
   "qps_10s": 4.2,
   "qps_1m": 3.8,

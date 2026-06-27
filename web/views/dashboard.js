@@ -205,6 +205,8 @@ function renderStats(host, stats) {
     ["NXDOMAIN", stats.nxdomain],
     ["Refused", stats.refused],
     ["SERVFAIL", stats.servfail],
+    ["IPv4 clients", stats.ipv4],
+    ["IPv6 clients", stats.ipv6],
   ];
   // Only meaningful when upstream DNSSEC validation is enabled.
   if (stats.dnssec_validate) {

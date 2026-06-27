@@ -9,6 +9,10 @@ All notable changes to Nomina are documented here. The format follows
 Initial public release. A single self-contained binary.
 
 ### Highlights
+- **IPv6** — robust dual-stack binding (IPv6 listeners are bound v6-only, so
+  listing both `0.0.0.0` and `[::]` works on every platform), per-family query
+  counters (IPv4 vs IPv6) on the dashboard and in `/api/stats` + Prometheus, and
+  IPv6 CIDRs everywhere views/allow-lists accept networks.
 - **Upstream DNSSEC validation** — the `dnssec_validate_upstream` setting is now
   wired to the resolver (forward and recursive modes) using the built-in IANA
   root trust anchor; bogus answers are rejected (SERVFAIL). The dashboard shows a

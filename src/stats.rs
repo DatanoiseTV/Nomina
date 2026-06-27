@@ -78,6 +78,8 @@ struct Counters {
     blocked: AtomicU64,
     dangerous: AtomicU64,
     dnssec_failures: AtomicU64,
+    ipv4: AtomicU64,
+    ipv6: AtomicU64,
 }
 
 /// Per-second ring of query counts for the rate chart.
@@ -202,6 +204,11 @@ impl Stats {
     ) -> Option<RecentQuery> {
         // Aggregate, non-identifying counters — always collected.
         self.counters.total.fetch_add(1, Ordering::Relaxed);
+        if client.is_ipv4() {
+            self.counters.ipv4.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.counters.ipv6.fetch_add(1, Ordering::Relaxed);
+        }
         match outcome {
             QueryOutcome::Authoritative | QueryOutcome::Rewritten => {
                 self.counters.authoritative.fetch_add(1, Ordering::Relaxed);
@@ -343,6 +350,8 @@ impl Stats {
             "blocked": self.counters.blocked.load(Ordering::Relaxed),
             "dangerous": self.counters.dangerous.load(Ordering::Relaxed),
             "dnssec_failures": self.counters.dnssec_failures.load(Ordering::Relaxed),
+            "ipv4": self.counters.ipv4.load(Ordering::Relaxed),
+            "ipv6": self.counters.ipv6.load(Ordering::Relaxed),
             "by_qtype": by_qtype,
             "qps_10s": (qps_10s * 100.0).round() / 100.0,
             "qps_1m": (qps_1m * 100.0).round() / 100.0,
@@ -374,6 +383,10 @@ impl Stats {
 
         counter(&mut out, "nomina_queries_total", "Total DNS queries handled.", c.total.load(Ordering::Relaxed));
         counter(&mut out, "nomina_dnssec_validation_failures_total", "Upstream answers rejected by DNSSEC validation.", c.dnssec_failures.load(Ordering::Relaxed));
+
+        out.push_str("# HELP nomina_queries_by_family Queries by client IP family.\n# TYPE nomina_queries_by_family counter\n");
+        out.push_str(&format!("nomina_queries_by_family{{family=\"ipv4\"}} {}\n", c.ipv4.load(Ordering::Relaxed)));
+        out.push_str(&format!("nomina_queries_by_family{{family=\"ipv6\"}} {}\n", c.ipv6.load(Ordering::Relaxed)));
 
         out.push_str("# HELP nomina_queries_by_outcome Queries by outcome.\n# TYPE nomina_queries_by_outcome counter\n");
         for (label, val) in [

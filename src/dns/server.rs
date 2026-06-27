@@ -11,6 +11,7 @@ use tokio::net::{TcpListener, UdpSocket};
 
 use crate::config::Config;
 use crate::dns::handler::DnsHandler;
+use crate::net::{bind_tcp, bind_udp};
 
 /// Pre-bound DNS sockets. Binding happens while still privileged; running
 /// happens after privileges are dropped.
@@ -25,33 +26,23 @@ pub struct DnsSockets {
 pub async fn bind(config: &Config) -> anyhow::Result<DnsSockets> {
     let mut plain = Vec::new();
     for addr in &config.dns.listen {
-        let udp = UdpSocket::bind(addr)
-            .await
-            .with_context(|| format!("binding UDP {addr}"))?;
-        let tcp = TcpListener::bind(addr)
-            .await
-            .with_context(|| format!("binding TCP {addr}"))?;
+        let udp = bind_udp(*addr).with_context(|| format!("binding UDP {addr}"))?;
+        let tcp = bind_tcp(*addr).with_context(|| format!("binding TCP {addr}"))?;
         plain.push((*addr, udp, tcp));
     }
     let mut dot = Vec::new();
     for addr in &config.dns.dot_listen {
-        let tcp = TcpListener::bind(addr)
-            .await
-            .with_context(|| format!("binding DoT {addr}"))?;
+        let tcp = bind_tcp(*addr).with_context(|| format!("binding DoT {addr}"))?;
         dot.push((*addr, tcp));
     }
     let mut doq = Vec::new();
     for addr in &config.dns.doq_listen {
-        let udp = UdpSocket::bind(addr)
-            .await
-            .with_context(|| format!("binding DoQ {addr}"))?;
+        let udp = bind_udp(*addr).with_context(|| format!("binding DoQ {addr}"))?;
         doq.push((*addr, udp));
     }
     let mut doh3 = Vec::new();
     for addr in &config.dns.doh3_listen {
-        let udp = UdpSocket::bind(addr)
-            .await
-            .with_context(|| format!("binding DoH3 {addr}"))?;
+        let udp = bind_udp(*addr).with_context(|| format!("binding DoH3 {addr}"))?;
         doh3.push((*addr, udp));
     }
     Ok(DnsSockets {

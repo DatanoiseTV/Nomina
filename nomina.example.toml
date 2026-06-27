@@ -16,7 +16,8 @@ log = "info"
 
 [dns]
 # Plain DNS (UDP + TCP). Bind to specific IPs to control reachability, e.g.
-# ["192.168.1.2:53"] to serve only on one interface, or both v4 and v6.
+# ["192.168.1.2:53"]. IPv6 listeners are bound v6-only, so to serve BOTH
+# protocols list both wildcards: ["0.0.0.0:53", "[::]:53"].
 listen = ["0.0.0.0:53"]
 # DNS-over-TLS (RFC 7858). Requires TLS material. Empty = disabled.
 dot_listen = []        # e.g. ["0.0.0.0:853"]
