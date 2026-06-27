@@ -9,9 +9,11 @@ use hickory_proto::op::ResponseCode;
 use hickory_proto::rr::rdata::{A, AAAA, CNAME};
 use hickory_proto::rr::{Name, RData, Record, RecordType};
 
+use rand::seq::SliceRandom;
+
 use crate::dns::dnssec::ZoneSigner;
 use crate::filter::{Decision, RewriteTarget};
-use crate::models::BlockMode;
+use crate::models::{BlockMode, LoadBalance};
 use crate::state::AppState;
 use crate::stats::QueryOutcome;
 use crate::store::{Outcome, ZoneStore};
@@ -39,6 +41,23 @@ pub async fn resolve_query(
     let started = std::time::Instant::now();
     let recursion_available = state.upstream().is_some();
     let store = state.store();
+
+    // Resolve the client's geo attributes once (cheap no-op when no database is
+    // configured); used for geo-targeted views and ASN blocking.
+    let geo = state.geo().lookup(client);
+
+    // ASN blocking: reject queries from blocked autonomous systems outright.
+    let blocked_asns = state.blocked_asns();
+    if !blocked_asns.is_empty() {
+        if let Some(asn) = geo.asn {
+            if blocked_asns.contains(&asn) {
+                let out = block_answer(state.block_mode(), qname, qtype, recursion_available);
+                record_stat(state, client, None, qname, qtype, QueryOutcome::Blocked, &out);
+                state.stats.record_latency(started.elapsed());
+                return out;
+            }
+        }
+    }
 
     // Apex DNSKEY is synthesized from the zone's signing key, not stored.
     if dnssec_ok && qtype == RecordType::DNSKEY {
@@ -74,7 +93,7 @@ pub async fn resolve_query(
         }
     }
 
-    let result = store.lookup(qname, qtype, client);
+    let result = store.lookup(qname, qtype, client, &geo);
     let view = result.view_name.clone();
     let outcome = result.outcome;
 
@@ -109,6 +128,9 @@ pub async fn resolve_query(
         }
     }
 
+    // Spread multi-address answers per the load-balancing setting.
+    apply_load_balance(&mut out.answers, state.load_balance(), || state.next_rotation());
+
     if let Some(entry) = state.stats.record(
         state.query_log(),
         client,
@@ -122,6 +144,41 @@ pub async fn resolve_query(
     }
     state.stats.record_latency(started.elapsed());
     out
+}
+
+/// Reorder the address records (A and AAAA, each among themselves) of an answer
+/// set per the load-balancing strategy. `rotation` supplies the round-robin
+/// offset and is only called when needed.
+fn apply_load_balance(answers: &mut [Record], mode: LoadBalance, rotation: impl Fn() -> u64) {
+    if mode == LoadBalance::Off || answers.len() < 2 {
+        return;
+    }
+    let offset = if mode == LoadBalance::RoundRobin {
+        rotation() as usize
+    } else {
+        0
+    };
+    for rtype in [RecordType::A, RecordType::AAAA] {
+        let idxs: Vec<usize> = answers
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.record_type() == rtype)
+            .map(|(i, _)| i)
+            .collect();
+        if idxs.len() < 2 {
+            continue;
+        }
+        let mut group: Vec<Record> = idxs.iter().map(|&i| answers[i].clone()).collect();
+        let len = group.len();
+        match mode {
+            LoadBalance::RoundRobin => group.rotate_left(offset % len),
+            LoadBalance::Random => group.shuffle(&mut rand::thread_rng()),
+            LoadBalance::Off => {}
+        }
+        for (slot, &i) in idxs.iter().enumerate() {
+            answers[i] = group[slot].clone();
+        }
+    }
 }
 
 fn same_name(a: &Name, b: &Name) -> bool {
@@ -383,4 +440,47 @@ async fn rewrite_answer(
         },
         QueryOutcome::Rewritten,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+
+    fn a_records(ips: &[&str]) -> Vec<Record> {
+        ips.iter()
+            .map(|s| {
+                Record::from_rdata(
+                    Name::root(),
+                    300,
+                    RData::A(A(s.parse::<Ipv4Addr>().unwrap())),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn round_robin_rotates_addresses() {
+        let mut ans = a_records(&["1.1.1.1", "2.2.2.2", "3.3.3.3"]);
+        apply_load_balance(&mut ans, LoadBalance::RoundRobin, || 1);
+        let got: Vec<String> = ans.iter().map(|r| r.data.to_string()).collect();
+        assert_eq!(got, vec!["2.2.2.2", "3.3.3.3", "1.1.1.1"]);
+    }
+
+    #[test]
+    fn off_keeps_order() {
+        let mut ans = a_records(&["1.1.1.1", "2.2.2.2"]);
+        apply_load_balance(&mut ans, LoadBalance::Off, || 99);
+        assert_eq!(ans[0].data.to_string(), "1.1.1.1");
+        assert_eq!(ans[1].data.to_string(), "2.2.2.2");
+    }
+
+    #[test]
+    fn random_preserves_the_set() {
+        let mut ans = a_records(&["1.1.1.1", "2.2.2.2", "3.3.3.3"]);
+        apply_load_balance(&mut ans, LoadBalance::Random, || 0);
+        let mut got: Vec<String> = ans.iter().map(|r| r.data.to_string()).collect();
+        got.sort();
+        assert_eq!(got, vec!["1.1.1.1", "2.2.2.2", "3.3.3.3"]);
+    }
 }

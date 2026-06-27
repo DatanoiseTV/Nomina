@@ -105,6 +105,12 @@ function openViewDialog({ view, onSaved }) {
   const addCidr = h("button.btn.btn-sm", { type: "button" }, [icon("plus", 16), "Add network"]);
   addCidr.addEventListener("click", () => cidrList.appendChild(cidrRow()));
 
+  // Geo matchers (require a GeoLite2 database; matched in addition to CIDRs).
+  const csv = (arr) => (arr && arr.length ? arr.join(", ") : "");
+  const countries = h("input", { type: "text", value: csv(view && view.countries), placeholder: "DE, FR, US" });
+  const continents = h("input", { type: "text", value: csv(view && view.continents), placeholder: "EU, NA" });
+  const asns = h("input", { type: "text", value: csv(view && view.asns), placeholder: "64500, 13335" });
+
   const form = h("form", [
     h("div.form-row", [
       h("div.field", [h("label", "Name"), name,
@@ -116,6 +122,16 @@ function openViewDialog({ view, onSaved }) {
       h("label", "Client networks (CIDR)"),
       cidrList,
       addCidr,
+    ]),
+    h("details", { style: "margin-top:6px" }, [
+      h("summary", { style: "cursor:pointer" }, "Geo matchers (GeoIP — optional)"),
+      h("div.hint", { style: "margin:6px 0" },
+        "Match clients by location/ASN in addition to CIDRs. Requires a GeoLite2 database configured under [geo]."),
+      h("div.form-row", [
+        h("div.field", [h("label", "Countries (ISO-2)"), countries]),
+        h("div.field", [h("label", "Continents"), continents]),
+        h("div.field", [h("label", "ASNs"), asns]),
+      ]),
     ]),
     isEdit && view.is_default
       ? h("div.inline-note", { style: "margin-top:8px" }, "This is the default view and cannot be deleted.")
@@ -138,11 +154,18 @@ function openViewDialog({ view, onSaved }) {
           const networks = [...cidrList.querySelectorAll("input")]
             .map((i) => i.value.trim())
             .filter(Boolean);
+          const splitCsv = (el) => el.value.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+          const asnList = splitCsv(asns)
+            .map((s) => parseInt(s, 10))
+            .filter((n) => Number.isInteger(n) && n > 0);
 
           const body = {
             name: name.value.trim(),
             priority: Number(priority.value),
             networks,
+            countries: splitCsv(countries),
+            continents: splitCsv(continents),
+            asns: asnList,
           };
           try {
             if (isEdit) {

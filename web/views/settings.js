@@ -86,6 +86,16 @@ export async function renderSettings(root) {
   // ---- DNSSEC ----
   const dnssec = h("input", { type: "checkbox", name: "dnssec_validate_upstream", checked: !!settings.dnssec_validate_upstream });
 
+  // ---- Load balancing + ASN blocking ----
+  const loadBalance = h("select", { name: "load_balance" },
+    [["off", "Off"], ["round_robin", "Round-robin"], ["random", "Random"]].map(
+      ([id, label]) => h("option", { value: id, selected: (settings.load_balance || "off") === id }, label)));
+  const blockedAsns = h("input", {
+    type: "text", name: "blocked_asns",
+    value: (settings.blocked_asns || []).join(", "),
+    placeholder: "e.g. 64500, 13335",
+  });
+
   // ---- Privacy / query logging (segmented control) ----
   let queryLog = QUERY_LOG_MODES.some((m) => m.id === settings.query_log) ? settings.query_log : "off";
   const qlDesc = h("div.inline-note", { style: "margin-top:10px" });
@@ -156,6 +166,23 @@ export async function renderSettings(root) {
       ])),
     ]),
 
+    // Load balancing & GeoIP
+    h("div.card.section", [
+      h("div.card-head", [h("h2", "Load balancing & GeoIP")]),
+      h("div.card-pad", [
+        h("div.form-row", [
+          h("div.field", { style: "max-width:240px" }, [h("label", "Load balancing"), loadBalance,
+            h("div.hint", "Reorder multi-address (A/AAAA) answers per query.")]),
+          h("div.field", [h("label", "Blocked ASNs"), blockedAsns,
+            h("div.hint", "Comma-separated AS numbers to reject. Requires an ASN database.")]),
+        ]),
+        h("div.hint", [
+          "Geo-targeted views and ASN blocking require MaxMind GeoLite2 databases configured under ",
+          h("code", "[geo]"), " in the config file (",
+          h("span.mono", "geoip_db"), " / ", h("span.mono", "asn_db"), ")."]),
+      ]),
+    ]),
+
     // Privacy / query logging
     h("div.card.section", [
       h("div.card-head", [h("h2", "Privacy / Query logging")]),
@@ -223,6 +250,12 @@ export async function renderSettings(root) {
       .map((i) => i.value.trim())
       .filter(Boolean);
 
+    // Parse blocked ASNs (comma/space separated positive integers).
+    const asns = blockedAsns.value
+      .split(/[\s,]+/)
+      .map((s) => parseInt(s, 10))
+      .filter((n) => Number.isInteger(n) && n > 0);
+
     // Build a partial body: only fields that changed from the loaded settings.
     const next = {
       forwarders,
@@ -235,9 +268,11 @@ export async function renderSettings(root) {
       cache_min_ttl: Number(cacheMin.value),
       cache_max_ttl: Number(cacheMax.value),
       dnssec_validate_upstream: dnssec.checked,
+      load_balance: loadBalance.value,
+      blocked_asns: asns,
     };
 
-    const ARRAY_FIELDS = new Set(["forwarders", "allow_axfr_from"]);
+    const ARRAY_FIELDS = new Set(["forwarders", "allow_axfr_from", "blocked_asns"]);
     const body = {};
     for (const [k, v] of Object.entries(next)) {
       const changed = ARRAY_FIELDS.has(k)

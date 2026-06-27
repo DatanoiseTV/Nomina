@@ -104,6 +104,11 @@ pub async fn status(State(state): State<SharedState>, _auth: Authed) -> ApiResul
         "blocked_domains": filter.blocked_count(),
         "rewrite_count": filter.rewrite_count(),
         "conditional_forward_count": state.conditional().len(),
+        "geo": {
+            "enabled": state.geo().enabled(),
+            "geoip": state.geo().has_geoip(),
+            "asn": state.geo().has_asn(),
+        },
     })))
 }
 
@@ -399,6 +404,12 @@ pub struct ViewCreate {
     networks: Vec<String>,
     #[serde(default = "default_priority")]
     priority: i64,
+    #[serde(default)]
+    countries: Vec<String>,
+    #[serde(default)]
+    continents: Vec<String>,
+    #[serde(default)]
+    asns: Vec<u32>,
 }
 
 fn default_priority() -> i64 {
@@ -410,6 +421,18 @@ pub struct ViewUpdate {
     name: Option<String>,
     networks: Option<Vec<String>>,
     priority: Option<i64>,
+    countries: Option<Vec<String>>,
+    continents: Option<Vec<String>>,
+    asns: Option<Vec<u32>>,
+}
+
+/// Normalize country/continent codes to uppercase, dropping blanks.
+fn upper(codes: &[String]) -> Vec<String> {
+    codes
+        .iter()
+        .map(|c| c.trim().to_ascii_uppercase())
+        .filter(|c| !c.is_empty())
+        .collect()
 }
 
 fn validate_networks(networks: &[String]) -> Result<(), AppError> {
@@ -439,9 +462,12 @@ pub async fn create_view(
     validate_networks(&req.networks)?;
     let name = req.name.clone();
     let nets = req.networks.clone();
+    let countries = upper(&req.countries);
+    let continents = upper(&req.continents);
+    let asns = req.asns.clone();
     let id = state
         .db
-        .run(move |c| Db::create_view(c, &name, &nets, req.priority))
+        .run(move |c| Db::create_view(c, &name, &nets, req.priority, &countries, &continents, &asns))
         .await?;
     state.reload_store()?;
     let view = state.db.run(move |c| Db::view(c, id)).await?;
@@ -477,9 +503,23 @@ pub async fn update_view(
     }
     let name = req.name.clone();
     let nets = req.networks.clone();
+    let countries = req.countries.as_ref().map(|v| upper(v));
+    let continents = req.continents.as_ref().map(|v| upper(v));
+    let asns = req.asns.clone();
     state
         .db
-        .run(move |c| Db::update_view(c, id, name.as_deref(), nets.as_deref(), req.priority))
+        .run(move |c| {
+            Db::update_view(
+                c,
+                id,
+                name.as_deref(),
+                nets.as_deref(),
+                req.priority,
+                countries.as_deref(),
+                continents.as_deref(),
+                asns.as_deref(),
+            )
+        })
         .await?;
     state.reload_store()?;
     let view = state.db.run(move |c| Db::view(c, id)).await?;
@@ -1061,6 +1101,8 @@ pub struct SettingsUpdate {
     allow_axfr_from: Option<Vec<String>>,
     tsig_keys: Option<Vec<TsigKey>>,
     axfr_require_tsig: Option<bool>,
+    load_balance: Option<LoadBalance>,
+    blocked_asns: Option<Vec<u32>>,
 }
 
 pub async fn get_settings(State(state): State<SharedState>, _auth: Authed) -> ApiResult<Response> {
@@ -1134,6 +1176,12 @@ pub async fn put_settings(
     }
     if let Some(v) = req.axfr_require_tsig {
         settings.axfr_require_tsig = v;
+    }
+    if let Some(v) = req.load_balance {
+        settings.load_balance = v;
+    }
+    if let Some(v) = req.blocked_asns {
+        settings.blocked_asns = v;
     }
 
     let to_store = settings.clone();

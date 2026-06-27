@@ -34,6 +34,9 @@ diesel::table! {
         priority -> BigInt,
         is_default -> Bool,
         created_at -> Text,
+        countries -> Text,
+        continents -> Text,
+        asns -> Text,
     }
 }
 

@@ -490,10 +490,13 @@ impl Db {
                 views::priority,
                 views::is_default,
                 views::created_at,
+                views::countries,
+                views::continents,
+                views::asns,
             ))
             .order(views::priority.asc())
             .then_order_by(views::id.asc())
-            .load::<(i64, String, String, i64, bool, String)>(conn)?
+            .load::<(i64, String, String, i64, bool, String, String, String, String)>(conn)?
             .into_iter()
             .map(Self::view_from)
             .collect()
@@ -509,8 +512,11 @@ impl Db {
                 views::priority,
                 views::is_default,
                 views::created_at,
+                views::countries,
+                views::continents,
+                views::asns,
             ))
-            .first::<(i64, String, String, i64, bool, String)>(conn)
+            .first::<(i64, String, String, i64, bool, String, String, String, String)>(conn)
             .optional()?
             .map(Self::view_from)
             .transpose()
@@ -521,8 +527,14 @@ impl Db {
         name: &str,
         networks: &[String],
         priority: i64,
+        countries: &[String],
+        continents: &[String],
+        asns: &[u32],
     ) -> QueryResult<i64> {
         let json = serde_json::to_string(networks).map_err(json_err)?;
+        let c = serde_json::to_string(countries).map_err(json_err)?;
+        let cont = serde_json::to_string(continents).map_err(json_err)?;
+        let a = serde_json::to_string(asns).map_err(json_err)?;
         diesel::insert_into(views::table)
             .values((
                 views::name.eq(name),
@@ -530,17 +542,24 @@ impl Db {
                 views::priority.eq(priority),
                 views::is_default.eq(false),
                 views::created_at.eq(now()),
+                views::countries.eq(c),
+                views::continents.eq(cont),
+                views::asns.eq(a),
             ))
             .returning(views::id)
             .get_result(conn)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn update_view(
         conn: &mut SqliteConnection,
         id: i64,
         name: Option<&str>,
         networks: Option<&[String]>,
         priority: Option<i64>,
+        countries: Option<&[String]>,
+        continents: Option<&[String]>,
+        asns: Option<&[u32]>,
     ) -> QueryResult<()> {
         if let Some(name) = name {
             diesel::update(views::table.filter(views::id.eq(id)))
@@ -556,6 +575,24 @@ impl Db {
         if let Some(p) = priority {
             diesel::update(views::table.filter(views::id.eq(id)))
                 .set(views::priority.eq(p))
+                .execute(conn)?;
+        }
+        if let Some(v) = countries {
+            let json = serde_json::to_string(v).map_err(json_err)?;
+            diesel::update(views::table.filter(views::id.eq(id)))
+                .set(views::countries.eq(json))
+                .execute(conn)?;
+        }
+        if let Some(v) = continents {
+            let json = serde_json::to_string(v).map_err(json_err)?;
+            diesel::update(views::table.filter(views::id.eq(id)))
+                .set(views::continents.eq(json))
+                .execute(conn)?;
+        }
+        if let Some(v) = asns {
+            let json = serde_json::to_string(v).map_err(json_err)?;
+            diesel::update(views::table.filter(views::id.eq(id)))
+                .set(views::asns.eq(json))
                 .execute(conn)?;
         }
         Ok(())
@@ -588,12 +625,20 @@ impl Db {
         Ok(())
     }
 
-    fn view_from(t: (i64, String, String, i64, bool, String)) -> QueryResult<View> {
+    fn view_from(
+        t: (i64, String, String, i64, bool, String, String, String, String),
+    ) -> QueryResult<View> {
         let networks: Vec<String> = serde_json::from_str(&t.2).map_err(json_err)?;
+        let countries: Vec<String> = serde_json::from_str(&t.6).map_err(json_err)?;
+        let continents: Vec<String> = serde_json::from_str(&t.7).map_err(json_err)?;
+        let asns: Vec<u32> = serde_json::from_str(&t.8).map_err(json_err)?;
         Ok(View {
             id: t.0,
             name: t.1,
             networks,
+            countries,
+            continents,
+            asns,
             priority: t.3,
             is_default: t.4,
             created_at: t.5,

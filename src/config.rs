@@ -22,6 +22,18 @@ pub struct Config {
     pub web: WebConfig,
     pub tls: TlsConfig,
     pub privileges: PrivilegesConfig,
+    pub geo: GeoConfig,
+}
+
+/// Optional MaxMind GeoLite2 databases for geo-targeted views and ASN blocking.
+/// Both are user-supplied (MaxMind's license forbids redistribution).
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct GeoConfig {
+    /// Path to a GeoLite2 Country or City `.mmdb` (for country/continent/city).
+    pub geoip_db: Option<PathBuf>,
+    /// Path to a GeoLite2 ASN `.mmdb` (for ASN-based views and blocking).
+    pub asn_db: Option<PathBuf>,
 }
 
 /// Drop to an unprivileged user/group after binding privileged sockets.
@@ -95,6 +107,7 @@ impl Default for Config {
             web: WebConfig::default(),
             tls: TlsConfig::default(),
             privileges: PrivilegesConfig::default(),
+            geo: GeoConfig::default(),
         }
     }
 }

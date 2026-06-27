@@ -51,6 +51,9 @@ one static binary with the database and web UI embedded.
   `0.0.0.0`, or REFUSED.
 - **DNSSEC** — opt-in per-zone online **signing** (ECDSA P-256, NSEC/NSEC3) with
   DS/DNSKEY export, plus optional **upstream validation**.
+- **GeoDNS, load balancing & ASN filtering** — views can match clients by
+  country/continent/ASN (with optional MaxMind GeoLite2 databases); round-robin /
+  random load balancing across multi-address answers; reject traffic by ASN.
 - **Encrypted transports** — DNS-over-TLS, DNS-over-HTTPS (RFC 8484), DNS-over-QUIC
   (RFC 9250), and DNS-over-HTTP/3.
 - **Zone transfers** — serve AXFR/IXFR to allow-listed secondaries, act as a
@@ -91,9 +94,9 @@ rules, not CIDR views. ³ needs a separate proxy. ⁴ BIND 9.18+. ⁵ Technitium
 its API; BIND via RFC 2136 — neither is the HTTP DynDNS2 protocol routers speak.
 ⁶ runs on .NET.</sub>
 
-**Not (yet) in Nomina:** no DHCP, no GeoDNS (roadmap), and it's young — it lacks
-the maturity and scale hardening of BIND/Technitium. For a pure recursor, Unbound
-is lighter; for authoritative-at-scale, Knot/NSD are battle-tested.
+**Not (yet) in Nomina:** no DHCP, and it's young — it lacks the maturity and
+scale hardening of BIND/Technitium. For a pure recursor, Unbound is lighter; for
+authoritative-at-scale, Knot/NSD are battle-tested.
 
 ## Quick start
 
@@ -131,8 +134,7 @@ process. The JSON API contract is the source of truth at
 
 ## Roadmap
 
-GeoDNS / geo-aware answers and load balancing · ASN-based filtering (MaxMind
-GeoLite2) · native packages and a container image.
+DHCP server · native packages (deb/rpm) and a container image · clustering / HA.
 
 ## Contributing
 

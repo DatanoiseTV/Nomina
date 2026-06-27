@@ -55,3 +55,11 @@ auto_self_signed = true
 # when started as root on Unix. The data_dir must be writable by this user.
 # user = "nomina"
 # group = "nomina"
+
+[geo]
+# Optional MaxMind GeoLite2 databases (user-supplied; not redistributed).
+# When set, views can match clients by country/continent/ASN (GeoDNS) and the
+# `blocked_asns` setting can reject traffic by autonomous system.
+# Download free GeoLite2 databases from https://www.maxmind.com/ (account required).
+# geoip_db = "/etc/nomina/GeoLite2-City.mmdb"   # or GeoLite2-Country.mmdb
+# asn_db   = "/etc/nomina/GeoLite2-ASN.mmdb"

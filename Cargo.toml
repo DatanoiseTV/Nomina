@@ -23,6 +23,7 @@ hickory-proto = { version = "0.26", features = ["dnssec-ring"] }
 hickory-resolver = { version = "0.26", features = ["tokio", "system-config", "tls-ring", "https-ring", "recursor", "dnssec-ring"] }
 hickory-server = { version = "0.26", features = ["tls-ring", "https-ring", "quic-ring", "h3-ring"] }
 hyper = { version = "1", features = ["server", "http1", "http2"] }
+maxminddb = "0.28"
 hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto"] }
 idna = "1"
 ipnet = { version = "2", features = ["serde"] }

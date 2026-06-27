@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use parking_lot::{Mutex, RwLock};
@@ -11,6 +12,7 @@ use crate::db::Db;
 use crate::dns::cache::DnsCache;
 use crate::dns::conditional::ConditionalSet;
 use crate::dns::upstream::Upstream;
+use crate::geo::GeoDb;
 use crate::filter::FilterSet;
 use crate::models::{BlockMode, ResolutionMode, Settings};
 use crate::stats::Stats;
@@ -35,6 +37,9 @@ pub struct AppState {
     filter: RwLock<Arc<FilterSet>>,
     cache: RwLock<Arc<DnsCache>>,
     settings: RwLock<Settings>,
+    geo: Arc<GeoDb>,
+    /// Monotonic counter driving round-robin answer rotation.
+    rr_counter: AtomicU64,
     throttle: Mutex<LoginThrottle>,
     qlog_tx: tokio::sync::mpsc::Sender<crate::stats::RecentQuery>,
 }
@@ -51,6 +56,10 @@ impl AppState {
         settings: Settings,
         qlog_tx: tokio::sync::mpsc::Sender<crate::stats::RecentQuery>,
     ) -> Self {
+        let geo = Arc::new(GeoDb::load(
+            config.geo.geoip_db.as_deref(),
+            config.geo.asn_db.as_deref(),
+        ));
         Self {
             db,
             config,
@@ -64,7 +73,9 @@ impl AppState {
                 settings.cache_min_ttl,
                 settings.cache_max_ttl,
             ))),
+            geo,
             settings: RwLock::new(settings),
+            rr_counter: AtomicU64::new(0),
             throttle: Mutex::new(LoginThrottle::default()),
             qlog_tx,
         }
@@ -123,6 +134,24 @@ impl AppState {
 
     pub fn dnssec_validate_upstream(&self) -> bool {
         self.settings.read().dnssec_validate_upstream
+    }
+
+    /// The GeoIP/ASN databases (may be empty if none configured).
+    pub fn geo(&self) -> Arc<GeoDb> {
+        self.geo.clone()
+    }
+
+    pub fn load_balance(&self) -> crate::models::LoadBalance {
+        self.settings.read().load_balance
+    }
+
+    pub fn blocked_asns(&self) -> Vec<u32> {
+        self.settings.read().blocked_asns.clone()
+    }
+
+    /// Next round-robin rotation offset.
+    pub fn next_rotation(&self) -> u64 {
+        self.rr_counter.fetch_add(1, Ordering::Relaxed)
     }
 
     pub fn homograph_mode(&self) -> crate::models::HomographMode {

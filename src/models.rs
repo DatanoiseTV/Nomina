@@ -26,6 +26,14 @@ pub struct View {
     pub id: i64,
     pub name: String,
     pub networks: Vec<String>,
+    /// Geo matchers (require a GeoLite2 database). A client matches the view if
+    /// its IP is in `networks` OR its country/continent/ASN is listed here.
+    #[serde(default)]
+    pub countries: Vec<String>,
+    #[serde(default)]
+    pub continents: Vec<String>,
+    #[serde(default)]
+    pub asns: Vec<u32>,
     pub priority: i64,
     pub is_default: bool,
     pub created_at: String,
@@ -149,6 +157,19 @@ pub enum ResolutionMode {
 }
 
 
+/// How to order multiple address records in an answer (simple load balancing).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LoadBalance {
+    /// Return records in their stored order.
+    #[default]
+    Off,
+    /// Rotate the address records on each query (round-robin).
+    RoundRobin,
+    /// Shuffle the address records on each query.
+    Random,
+}
+
 /// What to return for a blocked name. Serialized values match the API contract.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[derive(Default)]
@@ -261,6 +282,13 @@ pub struct Settings {
     /// Require a valid TSIG signature on incoming AXFR requests.
     #[serde(default)]
     pub axfr_require_tsig: bool,
+    /// Load-balancing strategy for multi-address answers.
+    #[serde(default)]
+    pub load_balance: LoadBalance,
+    /// Autonomous System numbers to reject queries from (requires a GeoLite2 ASN
+    /// database to be configured). Empty disables ASN blocking.
+    #[serde(default)]
+    pub blocked_asns: Vec<u32>,
 }
 
 fn default_true() -> bool {
@@ -296,6 +324,8 @@ impl Default for Settings {
             allow_axfr_from: Vec::new(),
             tsig_keys: Vec::new(),
             axfr_require_tsig: false,
+            load_balance: LoadBalance::Off,
+            blocked_asns: Vec::new(),
         }
     }
 }

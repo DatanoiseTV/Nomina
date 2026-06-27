@@ -1,0 +1,3 @@
+ALTER TABLE views DROP COLUMN asns;
+ALTER TABLE views DROP COLUMN continents;
+ALTER TABLE views DROP COLUMN countries;

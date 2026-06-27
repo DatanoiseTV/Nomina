@@ -204,6 +204,12 @@ that view.
   "created_at": "...", "updated_at": "..." }
 ```
 
+A `View` additionally carries geo matchers `countries` (ISO-2), `continents`, and
+`asns` (require a GeoLite2 database at runtime); a client matches a view if its IP
+is in `networks` **or** its country/continent/ASN is listed. `Settings` gains
+`load_balance` (`off | round_robin | random`) and `blocked_asns` (`[u32]`).
+`GET /api/status` reports `geo: { enabled, geoip, asn }`.
+
 - `name`: label(s) relative to the zone. `"@"` means the zone apex. Stored
   without the zone suffix. `fqdn` is derived (read-only).
 - `type`: one of the supported record types below.

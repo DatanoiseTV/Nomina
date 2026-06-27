@@ -9,6 +9,11 @@ All notable changes to Nomina are documented here. The format follows
 Initial public release. A single self-contained binary.
 
 ### Highlights
+- **GeoDNS, load balancing & ASN filtering** — views can now match clients by
+  country/continent/ASN (geo-targeted answers) using optional MaxMind GeoLite2
+  databases (`[geo]` config); `load_balance` (round-robin/random) spreads
+  multi-address answers; and `blocked_asns` rejects traffic by autonomous system.
+  Round-robin and geo-view matching are covered by tests.
 - **IPv6** — robust dual-stack binding (IPv6 listeners are bound v6-only, so
   listing both `0.0.0.0` and `[::]` works on every platform), per-family query
   counters (IPv4 vs IPv6) on the dashboard and in `/api/stats` + Prometheus, and

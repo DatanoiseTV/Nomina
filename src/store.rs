@@ -16,19 +16,43 @@ use tracing::warn;
 
 use crate::db::Db;
 use crate::dns::dnssec::{Nsec3Params, ZoneSigner};
+use crate::geo::ClientGeo;
 use crate::models::{parse_rdata, record_fqdn_name, soa_rname};
 
-/// A resolved split-horizon view with its parsed CIDR set.
+/// A resolved split-horizon view: a CIDR set plus optional geo matchers.
 pub struct ViewMatch {
     pub id: i64,
     pub name: String,
     pub nets: Vec<IpNet>,
+    pub countries: Vec<String>,
+    pub continents: Vec<String>,
+    pub asns: Vec<u32>,
     pub priority: i64,
 }
 
 impl ViewMatch {
-    fn matches(&self, ip: IpAddr) -> bool {
-        self.nets.iter().any(|n| n.contains(&ip))
+    /// A client matches if its IP is in `nets` OR its geo (country / continent /
+    /// ASN, when a GeoIP database resolved them) is listed.
+    fn matches(&self, ip: IpAddr, geo: &ClientGeo) -> bool {
+        if self.nets.iter().any(|n| n.contains(&ip)) {
+            return true;
+        }
+        if let Some(c) = &geo.country {
+            if self.countries.iter().any(|x| x.eq_ignore_ascii_case(c)) {
+                return true;
+            }
+        }
+        if let Some(c) = &geo.continent {
+            if self.continents.iter().any(|x| x.eq_ignore_ascii_case(c)) {
+                return true;
+            }
+        }
+        if let Some(a) = geo.asn {
+            if self.asns.contains(&a) {
+                return true;
+            }
+        }
+        false
     }
 }
 
@@ -105,6 +129,9 @@ impl ZoneStore {
                 id: v.id,
                 name: v.name,
                 nets,
+                countries: v.countries,
+                continents: v.continents,
+                asns: v.asns,
                 priority: v.priority,
             });
         }
@@ -214,11 +241,11 @@ impl ZoneStore {
         store
     }
 
-    /// Determine the view id (and name) for a client IP.
-    fn view_for(&self, ip: IpAddr) -> Option<(i64, &str)> {
+    /// Determine the view id (and name) for a client IP + geo attributes.
+    fn view_for(&self, ip: IpAddr, geo: &ClientGeo) -> Option<(i64, &str)> {
         self.views
             .iter()
-            .find(|v| v.matches(ip))
+            .find(|v| v.matches(ip, geo))
             .map(|v| (v.id, v.name.as_str()))
     }
 
@@ -260,8 +287,14 @@ impl ZoneStore {
 
     /// Perform an authoritative lookup. Returns [`Outcome::NotAuthoritative`]
     /// when no local zone covers the name (the caller should forward).
-    pub fn lookup(&self, qname: &Name, qtype: RecordType, client: IpAddr) -> LookupResult {
-        let (view_id, view_name) = match self.view_for(client) {
+    pub fn lookup(
+        &self,
+        qname: &Name,
+        qtype: RecordType,
+        client: IpAddr,
+        geo: &ClientGeo,
+    ) -> LookupResult {
+        let (view_id, view_name) = match self.view_for(client, geo) {
             Some((id, name)) => (id, Some(name.to_string())),
             None => (i64::MIN, None), // no view -> only all-views records apply
         };
@@ -404,7 +437,11 @@ impl ZoneStore {
             .zones
             .iter()
             .find(|z| name_key(&z.apex) == name_key(qname))?;
-        let view_id = self.view_for(client).map(|(id, _)| id).unwrap_or(i64::MIN);
+        // Zone transfers are matched by source CIDR only (no geo lookup).
+        let view_id = self
+            .view_for(client, &ClientGeo::default())
+            .map(|(id, _)| id)
+            .unwrap_or(i64::MIN);
 
         let soa = Record::from_rdata(
             zone.apex.clone(),
@@ -486,6 +523,9 @@ mod tests {
                 "internal",
                 &["10.0.0.0/8".into(), "192.168.0.0/16".into()],
                 10,
+                &[],
+                &[],
+                &[],
             )?;
             let zid = Db::create_zone(c, "home.lan", &Soa::default_for("home.lan"), 300)?;
             Db::create_record(c, zid, None, "@", "NS", None, "ns1.home.lan.")?;
@@ -507,12 +547,12 @@ mod tests {
     #[test]
     fn split_horizon_picks_view_specific_record() {
         let s = setup();
-        let internal = s.lookup(&qname("nas.home.lan."), RecordType::A, ip("10.0.0.50"));
+        let internal = s.lookup(&qname("nas.home.lan."), RecordType::A, ip("10.0.0.50"), &Default::default());
         assert_eq!(internal.outcome, Outcome::Authoritative);
         assert_eq!(internal.answers.len(), 1);
         assert_eq!(internal.answers[0].data.to_string(), "10.0.0.5");
 
-        let external = s.lookup(&qname("nas.home.lan."), RecordType::A, ip("8.8.8.8"));
+        let external = s.lookup(&qname("nas.home.lan."), RecordType::A, ip("8.8.8.8"), &Default::default());
         assert_eq!(external.outcome, Outcome::Authoritative);
         assert_eq!(external.answers[0].data.to_string(), "203.0.113.5");
         assert_eq!(external.view_name.as_deref(), Some("default"));
@@ -521,13 +561,13 @@ mod tests {
     #[test]
     fn nxdomain_vs_nodata() {
         let s = setup();
-        let nx = s.lookup(&qname("missing.home.lan."), RecordType::A, ip("8.8.8.8"));
+        let nx = s.lookup(&qname("missing.home.lan."), RecordType::A, ip("8.8.8.8"), &Default::default());
         assert_eq!(nx.outcome, Outcome::NxDomain);
         assert_eq!(nx.rcode, ResponseCode::NXDomain);
         assert_eq!(nx.authority.len(), 1, "NXDOMAIN carries SOA");
 
         // info exists as TXT, so AAAA is NODATA (NOERROR, empty answer + SOA).
-        let nodata = s.lookup(&qname("info.home.lan."), RecordType::AAAA, ip("8.8.8.8"));
+        let nodata = s.lookup(&qname("info.home.lan."), RecordType::AAAA, ip("8.8.8.8"), &Default::default());
         assert_eq!(nodata.outcome, Outcome::NoData);
         assert_eq!(nodata.rcode, ResponseCode::NoError);
         assert!(nodata.answers.is_empty());
@@ -537,14 +577,14 @@ mod tests {
     #[test]
     fn outside_zone_is_not_authoritative() {
         let s = setup();
-        let r = s.lookup(&qname("example.com."), RecordType::A, ip("8.8.8.8"));
+        let r = s.lookup(&qname("example.com."), RecordType::A, ip("8.8.8.8"), &Default::default());
         assert_eq!(r.outcome, Outcome::NotAuthoritative);
     }
 
     #[test]
     fn cname_chase_within_zone() {
         let s = setup();
-        let r = s.lookup(&qname("www.home.lan."), RecordType::A, ip("8.8.8.8"));
+        let r = s.lookup(&qname("www.home.lan."), RecordType::A, ip("8.8.8.8"), &Default::default());
         assert_eq!(r.outcome, Outcome::Authoritative);
         // Expect the CNAME plus the chased A record.
         let has_cname = r
@@ -562,7 +602,7 @@ mod tests {
     #[test]
     fn relative_cname_target_is_qualified() {
         let s = setup();
-        let r = s.lookup(&qname("www.home.lan."), RecordType::CNAME, ip("8.8.8.8"));
+        let r = s.lookup(&qname("www.home.lan."), RecordType::CNAME, ip("8.8.8.8"), &Default::default());
         assert_eq!(r.answers[0].data.to_string(), "nas.home.lan.");
     }
 
@@ -573,6 +613,7 @@ mod tests {
             &qname("anything.dyn.home.lan."),
             RecordType::A,
             ip("8.8.8.8"),
+            &Default::default(),
         );
         assert_eq!(r.outcome, Outcome::Authoritative);
         assert_eq!(r.answers.len(), 1);
@@ -587,9 +628,74 @@ mod tests {
     #[test]
     fn soa_at_apex() {
         let s = setup();
-        let r = s.lookup(&qname("home.lan."), RecordType::SOA, ip("8.8.8.8"));
+        let r = s.lookup(&qname("home.lan."), RecordType::SOA, ip("8.8.8.8"), &Default::default());
         assert_eq!(r.outcome, Outcome::Authoritative);
         assert_eq!(r.answers.len(), 1);
         assert_eq!(r.answers[0].record_type(), RecordType::SOA);
+    }
+
+    fn geo(country: &str) -> ClientGeo {
+        ClientGeo {
+            country: Some(country.to_string()),
+            ..Default::default()
+        }
+    }
+
+    /// A view matched by country code (GeoDNS) selects its records for clients in
+    /// that country, while everyone else falls back to the all-views record.
+    #[test]
+    fn geo_targeted_view() {
+        let db = Db::open_in_memory().unwrap();
+        db.with(|c| {
+            Db::ensure_default_view(c)?;
+            // A view that matches German clients by country, no CIDRs.
+            let de = Db::create_view(c, "germany", &[], 5, &["DE".into()], &[], &[])?;
+            let zid = Db::create_zone(c, "geo.test", &Soa::default_for("geo.test"), 300)?;
+            Db::create_record(c, zid, None, "www", "A", None, "192.0.2.1")?; // all views
+            Db::create_record(c, zid, Some(de), "www", "A", None, "203.0.113.9")?; // DE only
+            Ok(())
+        })
+        .unwrap();
+        let s = ZoneStore::load(&db).unwrap();
+
+        // A client geolocated to DE gets the DE-specific answer...
+        let german = s.lookup(&qname("www.geo.test."), RecordType::A, ip("8.8.8.8"), &geo("DE"));
+        assert_eq!(german.answers.len(), 1);
+        assert_eq!(german.answers[0].data.to_string(), "203.0.113.9");
+        assert_eq!(german.view_name.as_deref(), Some("germany"));
+
+        // ...everyone else gets the default all-views answer.
+        let other = s.lookup(&qname("www.geo.test."), RecordType::A, ip("8.8.8.8"), &geo("US"));
+        assert_eq!(other.answers.len(), 1);
+        assert_eq!(other.answers[0].data.to_string(), "192.0.2.1");
+    }
+
+    /// ASN and continent matchers on a view also resolve.
+    #[test]
+    fn view_matches_by_asn_and_continent() {
+        let v = ViewMatch {
+            id: 1,
+            name: "edge".into(),
+            nets: vec![],
+            countries: vec![],
+            continents: vec!["EU".into()],
+            asns: vec![64500],
+            priority: 1,
+        };
+        let asn_client = ClientGeo {
+            asn: Some(64500),
+            ..Default::default()
+        };
+        let eu_client = ClientGeo {
+            continent: Some("EU".into()),
+            ..Default::default()
+        };
+        let other = ClientGeo {
+            country: Some("US".into()),
+            ..Default::default()
+        };
+        assert!(v.matches(ip("8.8.8.8"), &asn_client));
+        assert!(v.matches(ip("8.8.8.8"), &eu_client));
+        assert!(!v.matches(ip("8.8.8.8"), &other));
     }
 }

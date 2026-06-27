@@ -10,6 +10,7 @@ mod db;
 mod dns;
 mod error;
 mod filter;
+mod geo;
 mod models;
 mod net;
 mod privileges;
