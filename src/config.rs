@@ -14,7 +14,7 @@ use serde::Deserialize;
 pub struct Config {
     /// Directory for the database, generated TLS cert, etc.
     pub data_dir: PathBuf,
-    /// Explicit database path; defaults to `<data_dir>/picons.db`.
+    /// Explicit database path; defaults to `<data_dir>/nomina.db`.
     pub database_path: Option<PathBuf>,
     /// `tracing` env-filter string.
     pub log: String,
@@ -29,7 +29,7 @@ pub struct Config {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PrivilegesConfig {
-    /// Username to drop to (e.g. "picons" or "nobody").
+    /// Username to drop to (e.g. "nomina" or "nobody").
     pub user: Option<String>,
     /// Group to drop to. Defaults to the user's primary group if unset.
     pub group: Option<String>,
@@ -129,7 +129,7 @@ impl Default for TlsConfig {
         Self {
             cert_path: None,
             key_path: None,
-            hostname: "picons.local".into(),
+            hostname: "nomina.local".into(),
             auto_self_signed: true,
         }
     }
@@ -154,7 +154,7 @@ impl Config {
     pub fn database_path(&self) -> PathBuf {
         self.database_path
             .clone()
-            .unwrap_or_else(|| self.data_dir.join("picons.db"))
+            .unwrap_or_else(|| self.data_dir.join("nomina.db"))
     }
 
     /// Whether any TLS-requiring listener is configured.

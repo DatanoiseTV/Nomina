@@ -1,4 +1,4 @@
-// Centralized API client for PicoNS.
+// Centralized API client for Nomina.
 // Handles cookies, CSRF, error parsing, and typed errors.
 
 export class ApiError extends Error {
@@ -32,7 +32,7 @@ async function request(method, path, body, opts = {}) {
   }
 
   if (MUTATING.has(method)) {
-    const token = readCookie("picons_csrf");
+    const token = readCookie("nomina_csrf");
     if (token) headers["X-CSRF-Token"] = token;
   }
 

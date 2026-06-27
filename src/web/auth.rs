@@ -59,8 +59,8 @@ pub fn hash_session_id(token: &str) -> String {
 
 // ----- cookies --------------------------------------------------------------
 
-pub const SESSION_COOKIE: &str = "picons_session";
-pub const CSRF_COOKIE: &str = "picons_csrf";
+pub const SESSION_COOKIE: &str = "nomina_session";
+pub const CSRF_COOKIE: &str = "nomina_csrf";
 
 /// Build the `Set-Cookie` value for the session cookie.
 pub fn session_cookie(token: &str, secure: bool, max_age: i64) -> String {

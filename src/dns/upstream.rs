@@ -26,20 +26,20 @@ pub struct UpstreamResult {
 /// An upstream resolver: either a forwarding stub resolver or a recursive
 /// resolver rooted at the DNS root servers.
 pub enum Upstream {
-    Forward(TokioResolver),
+    Forward(Box<TokioResolver>),
     Recurse(Box<Recursor<TokioRuntimeProvider>>),
 }
 
 impl Upstream {
     /// Build the upstream from settings. Returns `None` for authoritative-only
     /// mode (`ResolutionMode::Off`).
+    #[allow(clippy::field_reassign_with_default)] // RecursorOptions is non-exhaustive
     pub fn build(settings: &Settings) -> anyhow::Result<Option<Self>> {
         match settings.resolution_mode {
             ResolutionMode::Off => Ok(None),
-            ResolutionMode::Forward => Ok(Some(Upstream::Forward(build_forward_resolver(
-                &settings.forwarders,
-                settings,
-            )?))),
+            ResolutionMode::Forward => Ok(Some(Upstream::Forward(Box::new(
+                build_forward_resolver(&settings.forwarders, settings)?,
+            )))),
             ResolutionMode::Recursive => {
                 let roots: Vec<IpAddr> = ROOT_SERVERS
                     .iter()

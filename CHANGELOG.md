@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to PicoNS are documented here. The format follows
+All notable changes to Nomina are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
@@ -92,4 +92,4 @@ Initial release. A single self-contained binary.
   encrypted upstreams. Built with unwinding panics so a malformed packet cannot
   abort the process.
 
-[0.1.0]: https://github.com/DatanoiseTV/PicoNS/releases/tag/v0.1.0
+[0.1.0]: https://github.com/DatanoiseTV/Nomina/releases/tag/v0.1.0

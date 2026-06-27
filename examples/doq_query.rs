@@ -1,4 +1,4 @@
-//! Minimal DNS-over-QUIC (RFC 9250) client for verifying the PicoNS DoQ
+//! Minimal DNS-over-QUIC (RFC 9250) client for verifying the Nomina DoQ
 //! listener. Accepts any server certificate (for self-signed test setups).
 //!
 //! Usage: cargo run --example doq_query -- <ip:port> <name> [A|AAAA|...]
@@ -79,7 +79,7 @@ async fn main() -> anyhow::Result<()> {
     let mut endpoint = Endpoint::client("0.0.0.0:0".parse()?)?;
     endpoint.set_default_client_config(client_cfg);
 
-    let conn = endpoint.connect(addr, "picons.local")?.await?;
+    let conn = endpoint.connect(addr, "nomina.local")?.await?;
     let (mut send, mut recv) = conn.open_bi().await?;
 
     // DoQ: query id MUST be 0; message is length-prefixed (2 bytes, like TCP).

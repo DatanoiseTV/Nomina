@@ -1,4 +1,9 @@
-//! PicoNS — a split-horizon authoritative + forwarding DNS server with a web UI.
+//! Nomina — a split-horizon authoritative + forwarding DNS server with a web UI.
+
+// The DB/web layers have a few functions with many positional parameters and
+// boxed-trait-object query argument vectors; factoring these into structs/type
+// aliases would add indirection without improving clarity.
+#![allow(clippy::too_many_arguments, clippy::type_complexity)]
 
 mod config;
 mod db;
@@ -29,14 +34,14 @@ use crate::state::{AppState, SharedState};
 use crate::store::ZoneStore;
 
 #[derive(Parser, Debug)]
-#[command(name = "picons", version, about = "Split-horizon DNS server for homelabs")]
+#[command(name = "nomina", version, about = "Split-horizon DNS server for homelabs")]
 struct Cli {
     /// Path to a TOML configuration file.
-    #[arg(short, long, env = "PICONS_CONFIG")]
+    #[arg(short, long, env = "NOMINA_CONFIG")]
     config: Option<PathBuf>,
 
     /// Data directory (database, generated TLS cert).
-    #[arg(long, env = "PICONS_DATA_DIR")]
+    #[arg(long, env = "NOMINA_DATA_DIR")]
     data_dir: Option<PathBuf>,
 
     /// Plain DNS listen address (repeatable), e.g. 0.0.0.0:53.
@@ -71,8 +76,8 @@ struct Cli {
     #[arg(long)]
     hostname: Option<String>,
 
-    /// Log filter (e.g. "info", "picons=debug").
-    #[arg(long, env = "PICONS_LOG")]
+    /// Log filter (e.g. "info", "nomina=debug").
+    #[arg(long, env = "NOMINA_LOG")]
     log: Option<String>,
 }
 
@@ -305,7 +310,7 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    tracing::info!("PicoNS {} started", env!("CARGO_PKG_VERSION"));
+    tracing::info!("Nomina {} started", env!("CARGO_PKG_VERSION"));
 
     // Run until a fatal task exit or Ctrl-C.
     tokio::select! {

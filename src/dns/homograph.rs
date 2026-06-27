@@ -21,7 +21,7 @@ pub fn is_suspicious(qname: &str, mode: HomographMode) -> bool {
     match mode {
         HomographMode::Off => false,
         // Any internationalized (non-ASCII) name.
-        HomographMode::AllIdn => unicode.chars().any(|c| !c.is_ascii()),
+        HomographMode::AllIdn => !unicode.is_ascii(),
         // Any label mixing scripts (the classic homograph).
         HomographMode::Mixed => unicode.split('.').any(label_mixes_scripts),
     }

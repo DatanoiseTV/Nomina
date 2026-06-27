@@ -4,4 +4,4 @@
 /data/
 *.pem
 .DS_Store
-/picons.local.toml
+/nomina.local.toml

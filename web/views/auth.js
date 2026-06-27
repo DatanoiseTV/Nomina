@@ -6,7 +6,7 @@ import { h, icon, applyFieldErrors } from "../ui.js";
 function authShell(subtitle, formNode) {
   return h("div.auth-wrap",
     h("div.auth-card", [
-      h("div.auth-brand", [icon("logo", 28), h("span", "PicoNS")]),
+      h("div.auth-brand", [icon("logo", 28), h("span", "Nomina")]),
       h("p.auth-sub", subtitle),
       formNode,
     ])

@@ -372,10 +372,10 @@ impl Stats {
             out.push_str(&format!("# HELP {name} {help}\n# TYPE {name} gauge\n{name} {val}\n"));
         };
 
-        counter(&mut out, "picons_queries_total", "Total DNS queries handled.", c.total.load(Ordering::Relaxed));
-        counter(&mut out, "picons_dnssec_validation_failures_total", "Upstream answers rejected by DNSSEC validation.", c.dnssec_failures.load(Ordering::Relaxed));
+        counter(&mut out, "nomina_queries_total", "Total DNS queries handled.", c.total.load(Ordering::Relaxed));
+        counter(&mut out, "nomina_dnssec_validation_failures_total", "Upstream answers rejected by DNSSEC validation.", c.dnssec_failures.load(Ordering::Relaxed));
 
-        out.push_str("# HELP picons_queries_by_outcome Queries by outcome.\n# TYPE picons_queries_by_outcome counter\n");
+        out.push_str("# HELP nomina_queries_by_outcome Queries by outcome.\n# TYPE nomina_queries_by_outcome counter\n");
         for (label, val) in [
             ("authoritative", c.authoritative.load(Ordering::Relaxed)),
             ("forwarded", c.forwarded.load(Ordering::Relaxed)),
@@ -385,17 +385,17 @@ impl Stats {
             ("servfail", c.servfail.load(Ordering::Relaxed)),
             ("blocked", c.blocked.load(Ordering::Relaxed)),
         ] {
-            out.push_str(&format!("picons_queries_by_outcome{{outcome=\"{label}\"}} {val}\n"));
+            out.push_str(&format!("nomina_queries_by_outcome{{outcome=\"{label}\"}} {val}\n"));
         }
 
-        out.push_str("# HELP picons_queries_by_qtype Queries by record type.\n# TYPE picons_queries_by_qtype counter\n");
+        out.push_str("# HELP nomina_queries_by_qtype Queries by record type.\n# TYPE nomina_queries_by_qtype counter\n");
         for (qtype, val) in self.by_qtype.lock().iter() {
-            out.push_str(&format!("picons_queries_by_qtype{{qtype=\"{qtype}\"}} {val}\n"));
+            out.push_str(&format!("nomina_queries_by_qtype{{qtype=\"{qtype}\"}} {val}\n"));
         }
 
-        gauge(&mut out, "picons_uptime_seconds", "Process uptime in seconds.", self.uptime_seconds() as f64);
-        gauge(&mut out, "picons_qps_10s", "Queries per second over the last 10s.", (qps_10s * 100.0).round() / 100.0);
-        gauge(&mut out, "picons_qps_1m", "Queries per second over the last 60s.", (qps_1m * 100.0).round() / 100.0);
+        gauge(&mut out, "nomina_uptime_seconds", "Process uptime in seconds.", self.uptime_seconds() as f64);
+        gauge(&mut out, "nomina_qps_10s", "Queries per second over the last 10s.", (qps_10s * 100.0).round() / 100.0);
+        gauge(&mut out, "nomina_qps_1m", "Queries per second over the last 60s.", (qps_1m * 100.0).round() / 100.0);
         out
     }
 

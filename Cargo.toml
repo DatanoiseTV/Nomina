@@ -1,10 +1,10 @@
 [package]
-name = "picons"
+name = "nomina"
 version = "0.1.0"
 edition = "2024"
 description = "A secure, split-horizon authoritative + forwarding DNS server for homelabs, with a web UI and API. Single self-contained binary."
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/DatanoiseTV/PicoNS"
+repository = "https://github.com/DatanoiseTV/Nomina"
 readme = "README.md"
 rust-version = "1.85"
 
@@ -51,7 +51,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unicode-script = "0.5"
 
 # Release profile: optimize for size + speed, but keep unwinding panics.
-# PicoNS parses untrusted DNS bytes via hickory; `panic = "abort"` would let a
+# Nomina parses untrusted DNS bytes via hickory; `panic = "abort"` would let a
 # single malformed packet take down the whole process and would neuter tokio's
 # per-task panic isolation. Keep the default unwind behaviour.
 [profile.release]

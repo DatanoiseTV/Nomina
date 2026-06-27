@@ -1,4 +1,4 @@
-//! Verify a PicoNS-signed zone cryptographically (system `delv` on macOS lacks
+//! Verify a Nomina-signed zone cryptographically (system `delv` on macOS lacks
 //! ECDSA support). Queries the server with DO set, then validates the A RRset's
 //! RRSIG against the apex DNSKEY using hickory's verifier.
 //!

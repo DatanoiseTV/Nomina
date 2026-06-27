@@ -328,7 +328,7 @@ function dnssecCard(zone) {
 
   if (zone.is_secondary) {
     clear(body).appendChild(h("div.inline-note",
-      "This is a secondary zone. Its records are replicated from the primary and signed there; PicoNS does not sign replicated zones."));
+      "This is a secondary zone. Its records are replicated from the primary and signed there; Nomina does not sign replicated zones."));
     return card;
   }
 

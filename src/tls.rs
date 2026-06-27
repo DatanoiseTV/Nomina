@@ -42,8 +42,8 @@ pub fn load_or_generate(config: &Config) -> anyhow::Result<TlsMaterial> {
             load_pem(cert, key)
         }
         _ => {
-            let cert_path = config.data_dir.join("picons-cert.pem");
-            let key_path = config.data_dir.join("picons-key.pem");
+            let cert_path = config.data_dir.join("nomina-cert.pem");
+            let key_path = config.data_dir.join("nomina-key.pem");
             if cert_path.exists() && key_path.exists() {
                 load_pem(&cert_path, &key_path)
             } else if config.tls.auto_self_signed {

@@ -134,11 +134,13 @@ pub struct Forwarder {
     pub tls_name: Option<String>,
 }
 
-/// How PicoNS resolves names it is not authoritative for.
+/// How Nomina resolves names it is not authoritative for.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum ResolutionMode {
     /// Forward to the configured upstream resolvers.
+    #[default]
     Forward,
     /// Resolve recursively starting from the root servers (no upstream).
     Recursive,
@@ -146,18 +148,15 @@ pub enum ResolutionMode {
     Off,
 }
 
-impl Default for ResolutionMode {
-    fn default() -> Self {
-        ResolutionMode::Forward
-    }
-}
 
 /// What to return for a blocked name. Serialized values match the API contract.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Default)]
 pub enum BlockMode {
     /// Answer NXDOMAIN. `nx_domain` is accepted for backward compatibility with
     /// settings persisted by earlier builds.
     #[serde(rename = "nxdomain", alias = "nx_domain")]
+    #[default]
     NxDomain,
     /// Answer 0.0.0.0 / :: (a sinkhole address).
     #[serde(rename = "zero_ip")]
@@ -167,18 +166,15 @@ pub enum BlockMode {
     Refused,
 }
 
-impl Default for BlockMode {
-    fn default() -> Self {
-        BlockMode::NxDomain
-    }
-}
 
 /// Protection against IDN homograph / lookalike domains (e.g. a Cyrillic «а» in
 /// `аpple.com`, served on the wire as a `xn--` punycode label).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum HomographMode {
     /// No IDN filtering.
+    #[default]
     Off,
     /// Block internationalized names whose labels mix scripts (e.g. Latin +
     /// Cyrillic) — the classic homograph attack. Legitimate single-script IDNs
@@ -188,18 +184,15 @@ pub enum HomographMode {
     AllIdn,
 }
 
-impl Default for HomographMode {
-    fn default() -> Self {
-        HomographMode::Off
-    }
-}
 
 /// How much per-query detail to retain for the dashboard. Privacy-aware: `off`
 /// keeps only aggregate, non-identifying counters (the default).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum QueryLog {
     /// Aggregate counters only. No client IPs, names, or recent-query list.
+    #[default]
     Off,
     /// Record recent queries and top domains, but anonymize client IPs
     /// (IPv4 → /24, IPv6 → /48).
@@ -208,11 +201,6 @@ pub enum QueryLog {
     Full,
 }
 
-impl Default for QueryLog {
-    fn default() -> Self {
-        QueryLog::Off
-    }
-}
 
 /// A TSIG key (RFC 8945) for authenticating zone transfers. `secret` is the
 /// base64-encoded HMAC key; `algorithm` is e.g. `hmac-sha256`.
@@ -319,18 +307,15 @@ impl Default for Settings {
 /// Format of a remote blocklist source.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum BlocklistFormat {
     /// `hosts` file: `0.0.0.0 domain` or `127.0.0.1 domain` lines.
+    #[default]
     Hosts,
     /// Plain domain list, one domain per line.
     Domains,
 }
 
-impl Default for BlocklistFormat {
-    fn default() -> Self {
-        BlocklistFormat::Hosts
-    }
-}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Blocklist {
@@ -431,7 +416,7 @@ pub const ROOT_SERVERS: &[&str] = &[
 // DNS helpers
 // ---------------------------------------------------------------------------
 
-/// Record types PicoNS lets users manage. `SOA` is excluded (managed via the
+/// Record types Nomina lets users manage. `SOA` is excluded (managed via the
 /// zone) as are DNSSEC/transfer pseudo-types.
 pub const SUPPORTED_RECORD_TYPES: &[&str] = &[
     "A", "AAAA", "ANAME", "CAA", "CERT", "CNAME", "CSYNC", "HINFO", "HTTPS", "MX",

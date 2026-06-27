@@ -1,4 +1,4 @@
-# PicoNS
+# Nomina
 
 A secure, split-horizon DNS server for homelabs, hobbyists, and small networks —
 in a single self-contained binary. It is authoritative for your own zones, can
@@ -54,7 +54,7 @@ ships with a web UI and JSON API.
 cargo build --release
 # Serve DNS on :53 and the UI on http://127.0.0.1:8053 (no root needed on
 # non-privileged ports; for :53 run as root or grant CAP_NET_BIND_SERVICE).
-./target/release/picons --dns-listen 127.0.0.1:5353 --web-listen 127.0.0.1:8053
+./target/release/nomina --dns-listen 127.0.0.1:5353 --web-listen 127.0.0.1:8053
 ```
 
 Open the web UI, create the admin account on first run, then add a zone, records,
@@ -68,10 +68,10 @@ dig @127.0.0.1 -p 5353 nas.home.lan A
 
 Everything operational is managed at runtime via the UI/API and stored in the
 database. Listen sockets, TLS, bind addresses, and privilege settings come from a
-TOML file — see [`picons.example.toml`](picons.example.toml):
+TOML file — see [`nomina.example.toml`](nomina.example.toml):
 
 ```sh
-./picons --config picons.toml
+./nomina --config nomina.toml
 ```
 
 Key CLI flags (override the config): `--dns-listen` (repeatable), `--dot-listen`,
@@ -80,7 +80,7 @@ Key CLI flags (override the config): `--dns-listen` (repeatable), `--dot-listen`
 ### Running on privileged ports with privilege dropping
 
 ```toml
-# picons.toml
+# nomina.toml
 [dns]
 listen = ["0.0.0.0:53"]
 dot_listen = ["0.0.0.0:853"]
@@ -91,11 +91,11 @@ listen = "192.168.1.2:8053"   # LAN only, not public
 tls = true
 
 [privileges]
-user = "picons"               # bind as root, then drop
-group = "picons"
+user = "nomina"               # bind as root, then drop
+group = "nomina"
 ```
 
-Start as root; PicoNS binds the privileged sockets and drops to `picons`. Ensure
+Start as root; Nomina binds the privileged sockets and drops to `nomina`. Ensure
 `data_dir` is writable by that user.
 
 ## Architecture
@@ -126,9 +126,9 @@ The management API contract is the source of truth at
 v0.1.0 is feature-complete for homelab use and verified end-to-end. Possible
 future work (contributions/feedback welcome):
 
-- IXFR (incremental) transfers and NSEC3 for DNSSEC.
-- TSIG-authenticated zone transfers.
-- DNS-over-HTTP/3.
+- GeoDNS / geo-aware answers and load balancing (round-robin, weighted).
+- ASN-based filtering and blocking (MaxMind GeoLite2).
+- Native packages (deb/rpm) and a container image.
 
 ## License
 

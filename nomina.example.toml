@@ -1,5 +1,5 @@
-# PicoNS configuration (TOML). All values shown are defaults unless noted.
-# Copy to picons.toml and pass with `--config picons.toml`.
+# Nomina configuration (TOML). All values shown are defaults unless noted.
+# Copy to nomina.toml and pass with `--config nomina.toml`.
 #
 # Listen sockets, TLS, and privilege settings live here (changing them needs a
 # restart). Zones, records, views, forwarders, blocklists, rules and rewrites are
@@ -8,10 +8,10 @@
 # Directory for the database and the generated self-signed TLS certificate.
 data_dir = "./data"
 
-# Optional explicit database path (defaults to <data_dir>/picons.db).
-# database_path = "/var/lib/picons/picons.db"
+# Optional explicit database path (defaults to <data_dir>/nomina.db).
+# database_path = "/var/lib/nomina/nomina.db"
 
-# tracing log filter, e.g. "info", "picons=debug,warn".
+# tracing log filter, e.g. "info", "nomina=debug,warn".
 log = "info"
 
 [dns]
@@ -44,13 +44,13 @@ allow_networks = []    # e.g. ["192.168.0.0/16", "10.0.0.0/8"]
 [tls]
 # Provide your own certificate, or leave unset to auto-generate a self-signed one
 # under data_dir (shared by the web UI, DoT, and DoH).
-# cert_path = "/etc/picons/cert.pem"
-# key_path  = "/etc/picons/key.pem"
-hostname = "picons.local"
+# cert_path = "/etc/nomina/cert.pem"
+# key_path  = "/etc/nomina/key.pem"
+hostname = "nomina.local"
 auto_self_signed = true
 
 [privileges]
 # Bind privileged ports as root, then drop to this user/group. Only effective
 # when started as root on Unix. The data_dir must be writable by this user.
-# user = "picons"
-# group = "picons"
+# user = "nomina"
+# group = "nomina"

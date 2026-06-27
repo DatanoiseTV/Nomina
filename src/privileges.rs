@@ -1,4 +1,4 @@
-//! Privilege dropping. PicoNS binds privileged sockets (port 53, 853, 443) while
+//! Privilege dropping. Nomina binds privileged sockets (port 53, 853, 443) while
 //! running as root, then drops to an unprivileged user so the long-running
 //! request-handling process has no special privileges.
 

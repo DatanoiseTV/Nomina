@@ -1,6 +1,6 @@
-# PicoNS API Contract (v1)
+# Nomina API Contract (v1)
 
-Authoritative definition of the PicoNS management API. Backend and web UI both
+Authoritative definition of the Nomina management API. Backend and web UI both
 build against this file. No endpoint, type, or error shape may be added in code
 without updating this document first.
 
@@ -12,12 +12,12 @@ without updating this document first.
 
 ## Authentication & CSRF
 
-PicoNS uses **server-side sessions** with two cookies:
+Nomina uses **server-side sessions** with two cookies:
 
 | Cookie            | HttpOnly | SameSite | Secure\* | Purpose                              |
 |-------------------|----------|----------|----------|--------------------------------------|
-| `picons_session`  | yes      | Strict   | yes      | Opaque session id (server lookup).   |
-| `picons_csrf`     | no       | Strict   | yes      | Double-submit CSRF token (JS reads). |
+| `nomina_session`  | yes      | Strict   | yes      | Opaque session id (server lookup).   |
+| `nomina_csrf`     | no       | Strict   | yes      | Double-submit CSRF token (JS reads). |
 
 \* `Secure` is set only when the management server is served over HTTPS.
 
@@ -25,7 +25,7 @@ PicoNS uses **server-side sessions** with two cookies:
   (only a hash is persisted); the CSRF token is random per session.
 - **Every mutating request** (`POST`, `PUT`, `PATCH`, `DELETE`) must send the
   CSRF token in the `X-CSRF-Token` header. The server rejects the request with
-  `403 csrf_failed` if the header is absent or does not match the `picons_csrf`
+  `403 csrf_failed` if the header is absent or does not match the `nomina_csrf`
   cookie. `GET`/`HEAD` never require it.
 - Unauthenticated access to any `/api/*` endpoint except `POST /api/auth/login`
   and `GET /api/health` returns `401 unauthorized`.
@@ -454,7 +454,7 @@ not editable via the API, because changing a listen socket needs a restart.
 
 - The UI is a static bundle embedded in the binary, served from `/` (SPA: unknown
   non-`/api` paths return `index.html`).
-- The UI reads the `picons_csrf` cookie and sends `X-CSRF-Token` on mutations.
+- The UI reads the `nomina_csrf` cookie and sends `X-CSRF-Token` on mutations.
 - On `401` the UI redirects to the login screen.
 - First run: if no admin user exists, `GET /api/auth/me` returns
   `409 { "error": { "code": "setup_required" } }` and the UI shows a one-time

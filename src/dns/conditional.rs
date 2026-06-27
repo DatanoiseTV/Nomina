@@ -39,7 +39,7 @@ impl ConditionalSet {
                 Ok(resolver) => rules.push(Rule {
                     label_count: domain.split('.').count(),
                     domain,
-                    upstream: Arc::new(Upstream::Forward(resolver)),
+                    upstream: Arc::new(Upstream::Forward(Box::new(resolver))),
                 }),
                 Err(e) => {
                     tracing::warn!(domain = %cf.domain, "skipping conditional forward: {e}");
@@ -47,7 +47,7 @@ impl ConditionalSet {
             }
         }
         // Most-specific (longest) domain wins.
-        rules.sort_by(|a, b| b.label_count.cmp(&a.label_count));
+        rules.sort_by_key(|r| std::cmp::Reverse(r.label_count));
         Self { rules }
     }
 

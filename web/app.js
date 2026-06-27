@@ -1,4 +1,4 @@
-// PicoNS SPA bootstrap, hash router, and app shell.
+// Nomina SPA bootstrap, hash router, and app shell.
 
 import { api, ApiError } from "./api.js";
 import { h, clear, icon, initials, toast, toastError } from "./ui.js";
@@ -19,7 +19,7 @@ import { renderDyndns } from "./views/dyndns.js";
 import { renderQueries } from "./views/queries.js";
 
 // ---- Theme -----------------------------------------------------------------
-const THEME_KEY = "picons-theme";
+const THEME_KEY = "nomina-theme";
 
 export function getTheme() {
   return localStorage.getItem(THEME_KEY) || "system";
@@ -115,7 +115,7 @@ function buildShell() {
   themeBtn.addEventListener("click", cycleTheme);
 
   const sidebar = h("aside.sidebar", [
-    h("div.brand", [icon("logo", 26), h("span", "PicoNS")]),
+    h("div.brand", [icon("logo", 26), h("span", "Nomina")]),
     nav,
     h("div.sidebar-footer",
       h("a", { href: "#/account", dataset: { nav: "account" }, class: "user-chip" }, [
@@ -270,7 +270,7 @@ async function bootstrap() {
   }
 }
 
-window.addEventListener("picons:unauthorized", onUnauthorized);
+window.addEventListener("nomina:unauthorized", onUnauthorized);
 window.addEventListener("hashchange", handleRoute);
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", updateThemeButton);
 

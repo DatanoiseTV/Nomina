@@ -206,7 +206,7 @@ impl ZoneStore {
         }
 
         // Longest apex first for longest-suffix matching.
-        store.zones.sort_by(|a, b| b.label_count.cmp(&a.label_count));
+        store.zones.sort_by_key(|z| std::cmp::Reverse(z.label_count));
         store
     }
 
@@ -225,11 +225,11 @@ impl ZoneStore {
 
     /// Resolve records at one owner name for a view and type, applying
     /// split-horizon override (view-specific hides all-views).
-    fn resolve<'a>(
-        recs: &'a [StoredRecord],
+    fn resolve(
+        recs: &[StoredRecord],
         view_id: i64,
         rtype: RecordType,
-    ) -> Vec<&'a StoredRecord> {
+    ) -> Vec<&StoredRecord> {
         let specific: Vec<&StoredRecord> = recs
             .iter()
             .filter(|r| r.rtype == rtype && r.view_id == Some(view_id))

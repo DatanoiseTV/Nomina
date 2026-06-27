@@ -66,7 +66,7 @@ export async function renderDashboard(root, { registerCleanup }) {
             ? badge(`Resolution: ${RESOLUTION_LABEL[status.resolution_mode] || status.resolution_mode}`, "accent")
             : null,
         ]),
-        h("div.subtitle", `PicoNS ${status.version}`),
+        h("div.subtitle", `Nomina ${status.version}`),
       ]),
 
       // status cards
@@ -113,7 +113,7 @@ export async function renderDashboard(root, { registerCleanup }) {
       // transient; keep prior render. A dead session ends polling and bounces to login.
       if (e && e.status === 401) {
         cleanup();
-        window.dispatchEvent(new CustomEvent("picons:unauthorized"));
+        window.dispatchEvent(new CustomEvent("nomina:unauthorized"));
         return;
       }
     }

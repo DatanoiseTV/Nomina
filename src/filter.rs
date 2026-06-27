@@ -110,12 +110,11 @@ impl FilterSet {
         if self.allow_rules.iter().any(|p| domain_covers(p, name)) {
             return Decision::Allow;
         }
-        if self.blocking_enabled {
-            if self.blocked.contains(name) || self.deny_rules.iter().any(|p| domain_covers(p, name))
+        if self.blocking_enabled
+            && (self.blocked.contains(name) || self.deny_rules.iter().any(|p| domain_covers(p, name)))
             {
                 return Decision::Block;
             }
-        }
         Decision::Pass
     }
 

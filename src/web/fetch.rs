@@ -11,7 +11,7 @@ pub async fn fetch_blocklist(
 ) -> anyhow::Result<Vec<String>> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(60))
-        .user_agent(concat!("PicoNS/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("Nomina/", env!("CARGO_PKG_VERSION")))
         .build()?;
 
     let text = client

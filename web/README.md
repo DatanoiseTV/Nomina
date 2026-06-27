@@ -1,8 +1,8 @@
-# PicoNS web UI
+# Nomina web UI
 
-Static single-page app for the PicoNS management API. Plain HTML/CSS/vanilla JS
+Static single-page app for the Nomina management API. Plain HTML/CSS/vanilla JS
 (ES modules), no build step, no external resources. The whole directory is meant
-to be embedded into the PicoNS binary via `rust-embed` and served from `/`.
+to be embedded into the Nomina binary via `rust-embed` and served from `/`.
 Unknown non-`/api` paths should fall back to `index.html` (the app uses hash
 routing, e.g. `#/zones`, so this is proxy-friendly).
 
@@ -46,7 +46,7 @@ web/
 
 ## Auth / CSRF
 
-- `api.js` reads the non-HttpOnly `picons_csrf` cookie and sends it as the
+- `api.js` reads the non-HttpOnly `nomina_csrf` cookie and sends it as the
   `X-CSRF-Token` header on every `POST`/`PUT`/`PATCH`/`DELETE`. All requests use
   `credentials: "same-origin"`.
 - On startup the app calls `GET /api/auth/me`. `401` shows the login screen;
@@ -57,5 +57,5 @@ web/
 ## Theming
 
 `data-theme` on `<html>` is `system` (default), `light`, or `dark`, persisted in
-`localStorage` under `picons-theme`. The topbar toggle flips between light and
+`localStorage` under `nomina-theme`. The topbar toggle flips between light and
 dark; `system` follows `prefers-color-scheme`.
