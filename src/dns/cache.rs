@@ -55,7 +55,10 @@ impl DnsCache {
     }
 
     fn key(name: &Name, rtype: RecordType) -> (String, RecordType) {
-        (name.to_string().trim_end_matches('.').to_ascii_lowercase(), rtype)
+        (
+            name.to_string().trim_end_matches('.').to_ascii_lowercase(),
+            rtype,
+        )
     }
 
     /// Look up a fresh cached answer, recording a hit or miss.

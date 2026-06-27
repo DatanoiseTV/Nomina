@@ -547,12 +547,22 @@ mod tests {
     #[test]
     fn split_horizon_picks_view_specific_record() {
         let s = setup();
-        let internal = s.lookup(&qname("nas.home.lan."), RecordType::A, ip("10.0.0.50"), &Default::default());
+        let internal = s.lookup(
+            &qname("nas.home.lan."),
+            RecordType::A,
+            ip("10.0.0.50"),
+            &Default::default(),
+        );
         assert_eq!(internal.outcome, Outcome::Authoritative);
         assert_eq!(internal.answers.len(), 1);
         assert_eq!(internal.answers[0].data.to_string(), "10.0.0.5");
 
-        let external = s.lookup(&qname("nas.home.lan."), RecordType::A, ip("8.8.8.8"), &Default::default());
+        let external = s.lookup(
+            &qname("nas.home.lan."),
+            RecordType::A,
+            ip("8.8.8.8"),
+            &Default::default(),
+        );
         assert_eq!(external.outcome, Outcome::Authoritative);
         assert_eq!(external.answers[0].data.to_string(), "203.0.113.5");
         assert_eq!(external.view_name.as_deref(), Some("default"));
@@ -561,13 +571,23 @@ mod tests {
     #[test]
     fn nxdomain_vs_nodata() {
         let s = setup();
-        let nx = s.lookup(&qname("missing.home.lan."), RecordType::A, ip("8.8.8.8"), &Default::default());
+        let nx = s.lookup(
+            &qname("missing.home.lan."),
+            RecordType::A,
+            ip("8.8.8.8"),
+            &Default::default(),
+        );
         assert_eq!(nx.outcome, Outcome::NxDomain);
         assert_eq!(nx.rcode, ResponseCode::NXDomain);
         assert_eq!(nx.authority.len(), 1, "NXDOMAIN carries SOA");
 
         // info exists as TXT, so AAAA is NODATA (NOERROR, empty answer + SOA).
-        let nodata = s.lookup(&qname("info.home.lan."), RecordType::AAAA, ip("8.8.8.8"), &Default::default());
+        let nodata = s.lookup(
+            &qname("info.home.lan."),
+            RecordType::AAAA,
+            ip("8.8.8.8"),
+            &Default::default(),
+        );
         assert_eq!(nodata.outcome, Outcome::NoData);
         assert_eq!(nodata.rcode, ResponseCode::NoError);
         assert!(nodata.answers.is_empty());
@@ -577,14 +597,24 @@ mod tests {
     #[test]
     fn outside_zone_is_not_authoritative() {
         let s = setup();
-        let r = s.lookup(&qname("example.com."), RecordType::A, ip("8.8.8.8"), &Default::default());
+        let r = s.lookup(
+            &qname("example.com."),
+            RecordType::A,
+            ip("8.8.8.8"),
+            &Default::default(),
+        );
         assert_eq!(r.outcome, Outcome::NotAuthoritative);
     }
 
     #[test]
     fn cname_chase_within_zone() {
         let s = setup();
-        let r = s.lookup(&qname("www.home.lan."), RecordType::A, ip("8.8.8.8"), &Default::default());
+        let r = s.lookup(
+            &qname("www.home.lan."),
+            RecordType::A,
+            ip("8.8.8.8"),
+            &Default::default(),
+        );
         assert_eq!(r.outcome, Outcome::Authoritative);
         // Expect the CNAME plus the chased A record.
         let has_cname = r
@@ -602,7 +632,12 @@ mod tests {
     #[test]
     fn relative_cname_target_is_qualified() {
         let s = setup();
-        let r = s.lookup(&qname("www.home.lan."), RecordType::CNAME, ip("8.8.8.8"), &Default::default());
+        let r = s.lookup(
+            &qname("www.home.lan."),
+            RecordType::CNAME,
+            ip("8.8.8.8"),
+            &Default::default(),
+        );
         assert_eq!(r.answers[0].data.to_string(), "nas.home.lan.");
     }
 
@@ -628,7 +663,12 @@ mod tests {
     #[test]
     fn soa_at_apex() {
         let s = setup();
-        let r = s.lookup(&qname("home.lan."), RecordType::SOA, ip("8.8.8.8"), &Default::default());
+        let r = s.lookup(
+            &qname("home.lan."),
+            RecordType::SOA,
+            ip("8.8.8.8"),
+            &Default::default(),
+        );
         assert_eq!(r.outcome, Outcome::Authoritative);
         assert_eq!(r.answers.len(), 1);
         assert_eq!(r.answers[0].record_type(), RecordType::SOA);
@@ -659,13 +699,23 @@ mod tests {
         let s = ZoneStore::load(&db).unwrap();
 
         // A client geolocated to DE gets the DE-specific answer...
-        let german = s.lookup(&qname("www.geo.test."), RecordType::A, ip("8.8.8.8"), &geo("DE"));
+        let german = s.lookup(
+            &qname("www.geo.test."),
+            RecordType::A,
+            ip("8.8.8.8"),
+            &geo("DE"),
+        );
         assert_eq!(german.answers.len(), 1);
         assert_eq!(german.answers[0].data.to_string(), "203.0.113.9");
         assert_eq!(german.view_name.as_deref(), Some("germany"));
 
         // ...everyone else gets the default all-views answer.
-        let other = s.lookup(&qname("www.geo.test."), RecordType::A, ip("8.8.8.8"), &geo("US"));
+        let other = s.lookup(
+            &qname("www.geo.test."),
+            RecordType::A,
+            ip("8.8.8.8"),
+            &geo("US"),
+        );
         assert_eq!(other.answers.len(), 1);
         assert_eq!(other.answers[0].data.to_string(), "192.0.2.1");
     }

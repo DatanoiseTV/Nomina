@@ -76,7 +76,11 @@ mod tests {
 
     #[test]
     fn plain_ascii_never_blocked() {
-        for mode in [HomographMode::Mixed, HomographMode::AllIdn, HomographMode::Off] {
+        for mode in [
+            HomographMode::Mixed,
+            HomographMode::AllIdn,
+            HomographMode::Off,
+        ] {
             assert!(!is_suspicious("apple.com", mode));
             assert!(!is_suspicious("nas.home.lan", mode));
         }

@@ -38,7 +38,9 @@ fn text(status: StatusCode, body: impl Into<String>) -> Response {
 /// Decode an HTTP Basic `Authorization` header into `(user, pass)`.
 fn basic_auth(headers: &HeaderMap) -> Option<(String, String)> {
     let raw = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
-    let b64 = raw.strip_prefix("Basic ").or_else(|| raw.strip_prefix("basic "))?;
+    let b64 = raw
+        .strip_prefix("Basic ")
+        .or_else(|| raw.strip_prefix("basic "))?;
     let decoded = STANDARD.decode(b64.trim()).ok()?;
     let s = String::from_utf8(decoded).ok()?;
     let (u, p) = s.split_once(':')?;
@@ -56,7 +58,11 @@ pub async fn nic_update(
         return text(StatusCode::UNAUTHORIZED, "badauth");
     };
     let lookup_user = user.clone();
-    let auth = match state.db.run(move |c| Db::dyndns_auth(c, &lookup_user)).await {
+    let auth = match state
+        .db
+        .run(move |c| Db::dyndns_auth(c, &lookup_user))
+        .await
+    {
         Ok(Some(a)) if a.enabled => a,
         Ok(_) => return text(StatusCode::UNAUTHORIZED, "badauth"),
         Err(e) => {

@@ -12,7 +12,11 @@ use socket2::{Domain, Protocol, Socket, Type};
 use tokio::net::{TcpListener, UdpSocket};
 
 fn configure(addr: SocketAddr, ty: Type, proto: Protocol) -> std::io::Result<Socket> {
-    let domain = if addr.is_ipv6() { Domain::IPV6 } else { Domain::IPV4 };
+    let domain = if addr.is_ipv6() {
+        Domain::IPV6
+    } else {
+        Domain::IPV4
+    };
     let sock = Socket::new(domain, ty, Some(proto))?;
     if addr.is_ipv6() {
         sock.set_only_v6(true)?;

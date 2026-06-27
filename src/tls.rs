@@ -117,10 +117,7 @@ fn set_key_perms(_path: &Path) {}
 
 /// Build a rustls [`ServerConfig`] for the given ALPN protocols. Relies on the
 /// process-wide ring crypto provider installed at startup.
-pub fn server_config(
-    material: &TlsMaterial,
-    alpn: &[&[u8]],
-) -> anyhow::Result<Arc<ServerConfig>> {
+pub fn server_config(material: &TlsMaterial, alpn: &[&[u8]]) -> anyhow::Result<Arc<ServerConfig>> {
     let mut config = ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(material.certs.clone(), material.key.clone_key())?;

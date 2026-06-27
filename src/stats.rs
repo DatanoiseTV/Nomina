@@ -162,7 +162,9 @@ impl Default for Stats {
             series: Mutex::new(Series::new()),
             latencies: Mutex::new(VecDeque::with_capacity(LATENCY_CAPACITY)),
             started: Instant::now(),
-            started_at: OffsetDateTime::now_utc().format(&Rfc3339).unwrap_or_default(),
+            started_at: OffsetDateTime::now_utc()
+                .format(&Rfc3339)
+                .unwrap_or_default(),
         }
     }
 }
@@ -264,7 +266,9 @@ impl Stats {
             _ => anonymize(client),
         };
         let entry = RecentQuery {
-            at: OffsetDateTime::now_utc().format(&Rfc3339).unwrap_or_default(),
+            at: OffsetDateTime::now_utc()
+                .format(&Rfc3339)
+                .unwrap_or_default(),
             client,
             view,
             name,
@@ -283,7 +287,9 @@ impl Stats {
     /// Record an upstream answer rejected by DNSSEC validation (counted while
     /// `dnssec_validate_upstream` is enabled).
     pub fn record_dnssec_failure(&self) {
-        self.counters.dnssec_failures.fetch_add(1, Ordering::Relaxed);
+        self.counters
+            .dnssec_failures
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record a query's end-to-end resolution latency.
@@ -375,18 +381,38 @@ impl Stats {
         };
         let mut out = String::new();
         let counter = |out: &mut String, name: &str, help: &str, val: u64| {
-            out.push_str(&format!("# HELP {name} {help}\n# TYPE {name} counter\n{name} {val}\n"));
+            out.push_str(&format!(
+                "# HELP {name} {help}\n# TYPE {name} counter\n{name} {val}\n"
+            ));
         };
         let gauge = |out: &mut String, name: &str, help: &str, val: f64| {
-            out.push_str(&format!("# HELP {name} {help}\n# TYPE {name} gauge\n{name} {val}\n"));
+            out.push_str(&format!(
+                "# HELP {name} {help}\n# TYPE {name} gauge\n{name} {val}\n"
+            ));
         };
 
-        counter(&mut out, "nomina_queries_total", "Total DNS queries handled.", c.total.load(Ordering::Relaxed));
-        counter(&mut out, "nomina_dnssec_validation_failures_total", "Upstream answers rejected by DNSSEC validation.", c.dnssec_failures.load(Ordering::Relaxed));
+        counter(
+            &mut out,
+            "nomina_queries_total",
+            "Total DNS queries handled.",
+            c.total.load(Ordering::Relaxed),
+        );
+        counter(
+            &mut out,
+            "nomina_dnssec_validation_failures_total",
+            "Upstream answers rejected by DNSSEC validation.",
+            c.dnssec_failures.load(Ordering::Relaxed),
+        );
 
         out.push_str("# HELP nomina_queries_by_family Queries by client IP family.\n# TYPE nomina_queries_by_family counter\n");
-        out.push_str(&format!("nomina_queries_by_family{{family=\"ipv4\"}} {}\n", c.ipv4.load(Ordering::Relaxed)));
-        out.push_str(&format!("nomina_queries_by_family{{family=\"ipv6\"}} {}\n", c.ipv6.load(Ordering::Relaxed)));
+        out.push_str(&format!(
+            "nomina_queries_by_family{{family=\"ipv4\"}} {}\n",
+            c.ipv4.load(Ordering::Relaxed)
+        ));
+        out.push_str(&format!(
+            "nomina_queries_by_family{{family=\"ipv6\"}} {}\n",
+            c.ipv6.load(Ordering::Relaxed)
+        ));
 
         out.push_str("# HELP nomina_queries_by_outcome Queries by outcome.\n# TYPE nomina_queries_by_outcome counter\n");
         for (label, val) in [
@@ -398,17 +424,36 @@ impl Stats {
             ("servfail", c.servfail.load(Ordering::Relaxed)),
             ("blocked", c.blocked.load(Ordering::Relaxed)),
         ] {
-            out.push_str(&format!("nomina_queries_by_outcome{{outcome=\"{label}\"}} {val}\n"));
+            out.push_str(&format!(
+                "nomina_queries_by_outcome{{outcome=\"{label}\"}} {val}\n"
+            ));
         }
 
         out.push_str("# HELP nomina_queries_by_qtype Queries by record type.\n# TYPE nomina_queries_by_qtype counter\n");
         for (qtype, val) in self.by_qtype.lock().iter() {
-            out.push_str(&format!("nomina_queries_by_qtype{{qtype=\"{qtype}\"}} {val}\n"));
+            out.push_str(&format!(
+                "nomina_queries_by_qtype{{qtype=\"{qtype}\"}} {val}\n"
+            ));
         }
 
-        gauge(&mut out, "nomina_uptime_seconds", "Process uptime in seconds.", self.uptime_seconds() as f64);
-        gauge(&mut out, "nomina_qps_10s", "Queries per second over the last 10s.", (qps_10s * 100.0).round() / 100.0);
-        gauge(&mut out, "nomina_qps_1m", "Queries per second over the last 60s.", (qps_1m * 100.0).round() / 100.0);
+        gauge(
+            &mut out,
+            "nomina_uptime_seconds",
+            "Process uptime in seconds.",
+            self.uptime_seconds() as f64,
+        );
+        gauge(
+            &mut out,
+            "nomina_qps_10s",
+            "Queries per second over the last 10s.",
+            (qps_10s * 100.0).round() / 100.0,
+        );
+        gauge(
+            &mut out,
+            "nomina_qps_1m",
+            "Queries per second over the last 60s.",
+            (qps_1m * 100.0).round() / 100.0,
+        );
         out
     }
 

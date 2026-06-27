@@ -177,6 +177,7 @@ diesel::table! {
         dns_zone -> Nullable<Text>,
         options -> Text,
         created_at -> Text,
+        server_id -> Nullable<Text>,
     }
 }
 

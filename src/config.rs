@@ -23,6 +23,20 @@ pub struct Config {
     pub tls: TlsConfig,
     pub privileges: PrivilegesConfig,
     pub geo: GeoConfig,
+    pub dhcp: DhcpConfig,
+}
+
+/// DHCP server listeners. Empty lists disable the corresponding family — by
+/// default the DHCP server is off entirely. Binding the well-known ports (67 for
+/// DHCPv4, 547 for the DHCPv6 server) requires root or `CAP_NET_BIND_SERVICE`;
+/// sockets are bound while privileged and the server runs after privilege drop.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DhcpConfig {
+    /// DHCPv4 listen addresses (UDP, broadcast-capable), e.g. `["0.0.0.0:67"]`.
+    pub v4_listen: Vec<SocketAddr>,
+    /// DHCPv6 server listen addresses (UDP, IPv6-only), e.g. `["[::]:547"]`.
+    pub v6_listen: Vec<SocketAddr>,
 }
 
 /// Optional MaxMind GeoLite2 databases for geo-targeted views and ASN blocking.
@@ -108,6 +122,7 @@ impl Default for Config {
             tls: TlsConfig::default(),
             privileges: PrivilegesConfig::default(),
             geo: GeoConfig::default(),
+            dhcp: DhcpConfig::default(),
         }
     }
 }

@@ -467,7 +467,17 @@ pub async fn create_view(
     let asns = req.asns.clone();
     let id = state
         .db
-        .run(move |c| Db::create_view(c, &name, &nets, req.priority, &countries, &continents, &asns))
+        .run(move |c| {
+            Db::create_view(
+                c,
+                &name,
+                &nets,
+                req.priority,
+                &countries,
+                &continents,
+                &asns,
+            )
+        })
         .await?;
     state.reload_store()?;
     let view = state.db.run(move |c| Db::view(c, id)).await?;

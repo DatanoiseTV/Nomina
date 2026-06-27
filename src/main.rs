@@ -247,6 +247,9 @@ async fn main() -> anyhow::Result<()> {
     // ---- Bind all listeners while still privileged ----
     let dns_sockets = dns::server::bind(&config).await?;
 
+    // DHCP sockets (ports 67/547 are privileged). No-op when unconfigured.
+    let dhcp_sockets = dhcp::server::bind(&config)?;
+
     let web_listener = if config.web.disabled {
         None
     } else {
@@ -285,6 +288,29 @@ async fn main() -> anyhow::Result<()> {
             tracing::error!("DNS server stopped: {e}");
         }
     });
+
+    // ---- DHCP server + lease sweeper (no-ops when unconfigured) ----
+    if !dhcp_sockets.is_empty() {
+        dhcp::server::run(state.clone(), dhcp_sockets).await;
+        // Sweep expired leases on a one-minute cadence.
+        let state = state.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                tick.tick().await;
+                let now = time::OffsetDateTime::now_utc()
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .unwrap_or_default();
+                if let Err(e) = state
+                    .db
+                    .run(move |c| Db::prune_expired_leases(c, &now))
+                    .await
+                {
+                    tracing::warn!("DHCP lease sweep failed: {e}");
+                }
+            }
+        });
+    }
 
     if let Some(doh_cfg) = doh_tls {
         for (addr, listener) in doh_listeners {

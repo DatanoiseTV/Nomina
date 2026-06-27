@@ -12,8 +12,8 @@ use crate::db::Db;
 use crate::dns::cache::DnsCache;
 use crate::dns::conditional::ConditionalSet;
 use crate::dns::upstream::Upstream;
-use crate::geo::GeoDb;
 use crate::filter::FilterSet;
+use crate::geo::GeoDb;
 use crate::models::{BlockMode, ResolutionMode, Settings};
 use crate::stats::Stats;
 use crate::store::ZoneStore;
@@ -242,7 +242,10 @@ impl AppState {
 
     pub fn record_login_failure(&self, key: &str) {
         let mut t = self.throttle.lock();
-        let entry = t.failures.entry(key.to_string()).or_insert((0, Instant::now()));
+        let entry = t
+            .failures
+            .entry(key.to_string())
+            .or_insert((0, Instant::now()));
         if entry.1.elapsed() > LOCKOUT_WINDOW {
             *entry = (0, Instant::now());
         }

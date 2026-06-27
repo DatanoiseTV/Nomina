@@ -58,7 +58,14 @@ impl RequestHandler for DnsHandler {
         // full transfer per RFC 1995 (fallback when no incremental journal applies).
         if matches!(qtype, RecordType::AXFR | RecordType::IXFR) {
             return self
-                .handle_axfr(request, info.metadata, info.protocol, &qname, client, response_handle)
+                .handle_axfr(
+                    request,
+                    info.metadata,
+                    info.protocol,
+                    &qname,
+                    client,
+                    response_handle,
+                )
                 .await;
         }
 
@@ -112,18 +119,23 @@ impl DnsHandler {
     ) -> ResponseInfo {
         // AXFR over UDP is invalid; require a connection-oriented transport.
         if proto == Protocol::Udp {
-            return self.send_code(request, req_meta, response_handle, ResponseCode::Refused).await;
+            return self
+                .send_code(request, req_meta, response_handle, ResponseCode::Refused)
+                .await;
         }
         if !self.state.axfr_allowed(client) {
             tracing::warn!(%client, %qname, "denied AXFR (not allow-listed)");
-            return self.send_code(request, req_meta, response_handle, ResponseCode::Refused).await;
+            return self
+                .send_code(request, req_meta, response_handle, ResponseCode::Refused)
+                .await;
         }
         // TSIG: verify the request signature against configured keys; require it
         // when configured.
         if self.state.axfr_require_tsig() {
             let keys = self.state.tsig_keys();
             let ok = match request.signature.as_deref() {
-                Some(sig) => match crate::dns::tsig::verify_request(&keys, request.as_slice(), sig) {
+                Some(sig) => match crate::dns::tsig::verify_request(&keys, request.as_slice(), sig)
+                {
                     Ok(name) => {
                         tracing::debug!(%client, key = %name, "AXFR TSIG verified");
                         true
@@ -163,7 +175,8 @@ impl DnsHandler {
                 }
             }
             None => {
-                self.send_code(request, req_meta, response_handle, ResponseCode::Refused).await
+                self.send_code(request, req_meta, response_handle, ResponseCode::Refused)
+                    .await
             }
         }
     }

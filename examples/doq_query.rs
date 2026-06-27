@@ -97,7 +97,11 @@ async fn main() -> anyhow::Result<()> {
         anyhow::bail!("short DoQ response");
     }
     let answer = Message::from_vec(&resp[2..])?;
-    println!("rcode={:?} answers={}", answer.response_code, answer.answers.len());
+    println!(
+        "rcode={:?} answers={}",
+        answer.response_code,
+        answer.answers.len()
+    );
     for r in &answer.answers {
         println!("{} {} {}", r.name, r.record_type(), r.data);
     }

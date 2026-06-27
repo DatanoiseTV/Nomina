@@ -14,7 +14,7 @@ use hickory_resolver::net::runtime::TokioRuntimeProvider;
 use hickory_resolver::net::{DnsError, NetError};
 use hickory_resolver::recursor::{DnssecConfig, DnssecPolicy, Recursor, RecursorOptions};
 
-use crate::models::{ForwardProtocol, Forwarder, ResolutionMode, Settings, ROOT_SERVERS};
+use crate::models::{ForwardProtocol, Forwarder, ROOT_SERVERS, ResolutionMode, Settings};
 
 /// The result of resolving a query upstream.
 pub struct UpstreamResult {
@@ -41,10 +41,8 @@ impl Upstream {
                 build_forward_resolver(&settings.forwarders, settings)?,
             )))),
             ResolutionMode::Recursive => {
-                let roots: Vec<IpAddr> = ROOT_SERVERS
-                    .iter()
-                    .filter_map(|s| s.parse().ok())
-                    .collect();
+                let roots: Vec<IpAddr> =
+                    ROOT_SERVERS.iter().filter_map(|s| s.parse().ok()).collect();
                 let mut opts = RecursorOptions::default();
                 opts.response_cache_size = settings.cache_size;
                 // Validate from the built-in IANA root trust anchor when enabled;
@@ -54,14 +52,9 @@ impl Upstream {
                 } else {
                     DnssecPolicy::SecurityUnaware
                 };
-                let recursor = Recursor::new(
-                    &roots,
-                    policy,
-                    None,
-                    opts,
-                    TokioRuntimeProvider::default(),
-                )
-                .map_err(|e| anyhow::anyhow!("building recursor: {e}"))?;
+                let recursor =
+                    Recursor::new(&roots, policy, None, opts, TokioRuntimeProvider::default())
+                        .map_err(|e| anyhow::anyhow!("building recursor: {e}"))?;
                 Ok(Some(Upstream::Recurse(Box::new(recursor))))
             }
         }

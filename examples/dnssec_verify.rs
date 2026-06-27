@@ -38,7 +38,11 @@ async fn main() -> anyhow::Result<()> {
     let zone = Name::from_utf8(args.next().expect("zone"))?;
 
     let a = query(server, &qname, RecordType::A).await?;
-    println!("A response: {} answers, rcode={:?}", a.answers.len(), a.response_code);
+    println!(
+        "A response: {} answers, rcode={:?}",
+        a.answers.len(),
+        a.response_code
+    );
     let a_records: Vec<Record> = a
         .answers
         .iter()
@@ -66,7 +70,11 @@ async fn main() -> anyhow::Result<()> {
             dnskey.clone()
         }
         (s, k) => {
-            println!("missing material: rrsig={} dnskey={}", s.is_some(), k.is_some());
+            println!(
+                "missing material: rrsig={} dnskey={}",
+                s.is_some(),
+                k.is_some()
+            );
             None
         }
     };
@@ -80,7 +88,11 @@ async fn main() -> anyhow::Result<()> {
         neg.authorities.len()
     );
     // The denial may be NSEC or NSEC3.
-    let denial_type = if neg.authorities.iter().any(|r| r.record_type() == RecordType::NSEC3) {
+    let denial_type = if neg
+        .authorities
+        .iter()
+        .any(|r| r.record_type() == RecordType::NSEC3)
+    {
         RecordType::NSEC3
     } else {
         RecordType::NSEC

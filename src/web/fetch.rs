@@ -5,10 +5,7 @@ use std::time::Duration;
 use crate::models::BlocklistFormat;
 
 /// Fetch a blocklist URL and parse it into a deduplicated list of domains.
-pub async fn fetch_blocklist(
-    url: &str,
-    format: BlocklistFormat,
-) -> anyhow::Result<Vec<String>> {
+pub async fn fetch_blocklist(url: &str, format: BlocklistFormat) -> anyhow::Result<Vec<String>> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(60))
         .user_agent(concat!("Nomina/", env!("CARGO_PKG_VERSION")))
@@ -51,10 +48,7 @@ pub fn parse_blocklist(text: &str, format: BlocklistFormat) -> Vec<String> {
             BlocklistFormat::Domains => line.split_whitespace().next().unwrap_or(""),
         };
 
-        let domain = candidate
-            .trim()
-            .trim_end_matches('.')
-            .to_ascii_lowercase();
+        let domain = candidate.trim().trim_end_matches('.').to_ascii_lowercase();
 
         if domain.is_empty()
             || domain == "localhost"
@@ -93,6 +87,9 @@ mod tests {
     fn parses_domain_format() {
         let text = "ads.example.com\n! adblock comment\ntracker.net\n";
         let d = parse_blocklist(text, BlocklistFormat::Domains);
-        assert_eq!(d, vec!["ads.example.com".to_string(), "tracker.net".to_string()]);
+        assert_eq!(
+            d,
+            vec!["ads.example.com".to_string(), "tracker.net".to_string()]
+        );
     }
 }

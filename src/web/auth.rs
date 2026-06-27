@@ -1,9 +1,9 @@
 //! Authentication: password hashing, server-side sessions, and the request
 //! extractor that gates the API (including CSRF for mutating requests).
 
+use argon2::Argon2;
 use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
-use argon2::Argon2;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, Method, StatusCode};
@@ -86,7 +86,10 @@ fn cookie(name: &str, value: &str, secure: bool, http_only: bool, max_age: i64) 
 /// Parse the `Cookie` header into name->value pairs.
 pub fn parse_cookies(headers: &HeaderMap) -> std::collections::HashMap<String, String> {
     let mut map = std::collections::HashMap::new();
-    if let Some(raw) = headers.get(axum::http::header::COOKIE).and_then(|v| v.to_str().ok()) {
+    if let Some(raw) = headers
+        .get(axum::http::header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+    {
         for pair in raw.split(';') {
             if let Some((k, v)) = pair.trim().split_once('=') {
                 map.insert(k.trim().to_string(), v.trim().to_string());
@@ -114,10 +117,7 @@ fn is_mutating(method: &Method) -> bool {
 
 /// Resolve and validate the session from cookies, returning the user and the
 /// session's CSRF token. Does not perform the CSRF check.
-pub async fn resolve_session(
-    state: &SharedState,
-    headers: &HeaderMap,
-) -> Result<Authed, AppError> {
+pub async fn resolve_session(state: &SharedState, headers: &HeaderMap) -> Result<Authed, AppError> {
     let cookies = parse_cookies(headers);
     let token = cookies
         .get(SESSION_COOKIE)
@@ -166,10 +166,7 @@ impl FromRequestParts<SharedState> for Authed {
                 .get("x-csrf-token")
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("");
-            let ok: bool = header
-                .as_bytes()
-                .ct_eq(authed.csrf_token.as_bytes())
-                .into();
+            let ok: bool = header.as_bytes().ct_eq(authed.csrf_token.as_bytes()).into();
             if !ok {
                 return Err(AppError::new(
                     StatusCode::FORBIDDEN,

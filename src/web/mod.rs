@@ -16,9 +16,9 @@ use axum::http::{HeaderName, HeaderValue, Request, StatusCode, Uri, header};
 use axum::middleware::{Next, from_fn_with_state};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
-use ipnet::IpNet;
 use hyper::body::Incoming;
 use hyper_util::rt::{TokioExecutor, TokioIo};
+use ipnet::IpNet;
 use rust_embed::Embed;
 use rustls::ServerConfig;
 use tokio::net::TcpListener;
@@ -47,18 +47,26 @@ pub fn router(state: SharedState) -> Router {
         .route("/api/status", get(api::status))
         .route("/api/stats", get(api::stats))
         .route("/api/stats/clear", post(api::clear_stats))
-        .route("/api/queries", get(api::query_log).delete(api::clear_query_log))
+        .route(
+            "/api/queries",
+            get(api::query_log).delete(api::clear_query_log),
+        )
         .route("/api/auth/login", post(api::login))
         .route("/api/auth/logout", post(api::logout))
         .route("/api/auth/me", get(api::me))
         .route("/api/auth/change-password", post(api::change_password))
         .route("/api/setup", post(api::setup))
         .route("/api/views", get(api::list_views).post(api::create_view))
-        .route("/api/views/{id}", put(api::update_view).delete(api::delete_view))
+        .route(
+            "/api/views/{id}",
+            put(api::update_view).delete(api::delete_view),
+        )
         .route("/api/zones", get(api::list_zones).post(api::create_zone))
         .route(
             "/api/zones/{id}",
-            get(api::get_zone).put(api::update_zone).delete(api::delete_zone),
+            get(api::get_zone)
+                .put(api::update_zone)
+                .delete(api::delete_zone),
         )
         .route(
             "/api/zones/{id}/records",
@@ -68,32 +76,52 @@ pub fn router(state: SharedState) -> Router {
         .route("/api/zones/{id}/import", post(api::import_zone))
         .route(
             "/api/zones/{id}/dnssec",
-            get(api::get_dnssec).post(api::enable_dnssec).delete(api::disable_dnssec),
+            get(api::get_dnssec)
+                .post(api::enable_dnssec)
+                .delete(api::disable_dnssec),
         )
         .route(
             "/api/secondary-zones",
             get(api::list_secondaries).post(api::create_secondary),
         )
-        .route("/api/secondary-zones/{id}/refresh", post(api::refresh_secondary))
+        .route(
+            "/api/secondary-zones/{id}/refresh",
+            post(api::refresh_secondary),
+        )
         .route(
             "/api/records/{id}",
             put(api::update_record).delete(api::delete_record),
         )
-        .route("/api/settings", get(api::get_settings).put(api::put_settings))
+        .route(
+            "/api/settings",
+            get(api::get_settings).put(api::put_settings),
+        )
         .route(
             "/api/blocklists",
             get(api::list_blocklists).post(api::create_blocklist),
         )
         .route("/api/blocklists/catalog", get(api::blocklist_catalog))
-        .route("/api/blocklists/refresh_all", post(api::refresh_all_blocklists))
+        .route(
+            "/api/blocklists/refresh_all",
+            post(api::refresh_all_blocklists),
+        )
         .route(
             "/api/blocklists/{id}",
             put(api::update_blocklist).delete(api::delete_blocklist),
         )
         .route("/api/blocklists/{id}/refresh", post(api::refresh_blocklist))
-        .route("/api/rules", get(api::list_block_rules).post(api::create_block_rule))
-        .route("/api/rules/{id}", axum::routing::delete(api::delete_block_rule))
-        .route("/api/rewrites", get(api::list_rewrites).post(api::create_rewrite))
+        .route(
+            "/api/rules",
+            get(api::list_block_rules).post(api::create_block_rule),
+        )
+        .route(
+            "/api/rules/{id}",
+            axum::routing::delete(api::delete_block_rule),
+        )
+        .route(
+            "/api/rewrites",
+            get(api::list_rewrites).post(api::create_rewrite),
+        )
         .route(
             "/api/rewrites/{id}",
             put(api::update_rewrite).delete(api::delete_rewrite),

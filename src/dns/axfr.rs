@@ -26,7 +26,11 @@ const TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_RECORDS: usize = 2_000_000;
 
 fn bind_addr(primary: SocketAddr) -> &'static str {
-    if primary.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" }
+    if primary.is_ipv6() {
+        "[::]:0"
+    } else {
+        "0.0.0.0:0"
+    }
 }
 
 /// Query the primary for the zone's SOA serial (UDP).
@@ -76,8 +80,7 @@ pub async fn axfr_transfer(
         tokio::time::timeout(TIMEOUT, stream.read_exact(&mut mbuf)).await??;
         let m = Message::from_vec(&mbuf)?;
 
-        if records.is_empty()
-            && m.answers.first().map(|r| r.record_type()) != Some(RecordType::SOA)
+        if records.is_empty() && m.answers.first().map(|r| r.record_type()) != Some(RecordType::SOA)
         {
             anyhow::bail!("AXFR did not begin with SOA (transfer refused?)");
         }

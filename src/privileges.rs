@@ -44,7 +44,10 @@ pub fn drop_privileges(cfg: &PrivilegesConfig) -> anyhow::Result<()> {
     // Once the uid changes we can no longer adjust groups.
     // SAFETY: clearing supplementary groups via libc while still root.
     if unsafe { libc::setgroups(0, std::ptr::null()) } != 0 {
-        tracing::warn!("failed to clear supplementary groups: {}", std::io::Error::last_os_error());
+        tracing::warn!(
+            "failed to clear supplementary groups: {}",
+            std::io::Error::last_os_error()
+        );
     }
     if let Some(gid) = target_gid {
         setgid(gid)?;

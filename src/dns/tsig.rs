@@ -30,7 +30,8 @@ pub fn build_signer(key: &TsigKey) -> anyhow::Result<TSigner> {
         .map_err(|e| anyhow::anyhow!("invalid base64 TSIG secret: {e}"))?;
     let mut name = Name::from_utf8(&key.name)?;
     name.set_fqdn(true);
-    TSigner::new(secret, algo, name, FUDGE).map_err(|e| anyhow::anyhow!("building TSIG signer: {e}"))
+    TSigner::new(secret, algo, name, FUDGE)
+        .map_err(|e| anyhow::anyhow!("building TSIG signer: {e}"))
 }
 
 /// The current unix time for TSIG `finalize`.

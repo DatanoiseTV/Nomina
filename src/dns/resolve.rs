@@ -52,7 +52,15 @@ pub async fn resolve_query(
         if let Some(asn) = geo.asn {
             if blocked_asns.contains(&asn) {
                 let out = block_answer(state.block_mode(), qname, qtype, recursion_available);
-                record_stat(state, client, None, qname, qtype, QueryOutcome::Blocked, &out);
+                record_stat(
+                    state,
+                    client,
+                    None,
+                    qname,
+                    qtype,
+                    QueryOutcome::Blocked,
+                    &out,
+                );
                 state.stats.record_latency(started.elapsed());
                 return out;
             }
@@ -70,7 +78,15 @@ pub async fn resolve_query(
                     authoritative: true,
                     recursion_available,
                 };
-                record_stat(state, client, None, qname, qtype, QueryOutcome::Authoritative, &out);
+                record_stat(
+                    state,
+                    client,
+                    None,
+                    qname,
+                    qtype,
+                    QueryOutcome::Authoritative,
+                    &out,
+                );
                 return out;
             }
         }
@@ -87,7 +103,15 @@ pub async fn resolve_query(
                     authoritative: true,
                     recursion_available,
                 };
-                record_stat(state, client, None, qname, qtype, QueryOutcome::Authoritative, &out);
+                record_stat(
+                    state,
+                    client,
+                    None,
+                    qname,
+                    qtype,
+                    QueryOutcome::Authoritative,
+                    &out,
+                );
                 return out;
             }
         }
@@ -118,7 +142,9 @@ pub async fn resolve_query(
             },
             QueryOutcome::NxDomain,
         ),
-        Outcome::NotAuthoritative => resolve_external(state, qname, qtype, recursion_available).await,
+        Outcome::NotAuthoritative => {
+            resolve_external(state, qname, qtype, recursion_available).await
+        }
     };
 
     // DNSSEC: sign authoritative answers / prove denials on signed zones.
@@ -129,7 +155,9 @@ pub async fn resolve_query(
     }
 
     // Spread multi-address answers per the load-balancing setting.
-    apply_load_balance(&mut out.answers, state.load_balance(), || state.next_rotation());
+    apply_load_balance(&mut out.answers, state.load_balance(), || {
+        state.next_rotation()
+    });
 
     if let Some(entry) = state.stats.record(
         state.query_log(),
@@ -402,7 +430,11 @@ async fn rewrite_answer(
     match target {
         RewriteTarget::Ip(ip) => match (qtype, ip) {
             (RecordType::A | RecordType::ANY, IpAddr::V4(v4)) => {
-                answers.push(Record::from_rdata(qname.clone(), REWRITE_TTL, RData::A(A(v4))));
+                answers.push(Record::from_rdata(
+                    qname.clone(),
+                    REWRITE_TTL,
+                    RData::A(A(v4)),
+                ));
             }
             (RecordType::AAAA | RecordType::ANY, IpAddr::V6(v6)) => {
                 answers.push(Record::from_rdata(

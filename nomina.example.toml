@@ -63,3 +63,21 @@ auto_self_signed = true
 # Download free GeoLite2 databases from https://www.maxmind.com/ (account required).
 # geoip_db = "/etc/nomina/GeoLite2-City.mmdb"   # or GeoLite2-Country.mmdb
 # asn_db   = "/etc/nomina/GeoLite2-ASN.mmdb"
+
+[dhcp]
+# Built-in DHCP server. Disabled by default: with both lists empty, no DHCP
+# sockets are bound and no serving loops run. Scopes, reservations, and options
+# are managed at runtime (database), not here — only the listen sockets are
+# startup config.
+#
+# Binding the well-known ports (67 for DHCPv4, 547 for the DHCPv6 server)
+# requires root or CAP_NET_BIND_SERVICE. Sockets are bound while privileged and
+# the server runs after privilege drop, just like the DNS listeners.
+#
+# DHCPv4 listeners are bound broadcast-capable (replies to un-relayed clients go
+# to 255.255.255.255:68). DHCPv6 listeners are IPv6-only; the v6 server listens
+# on 547 and replies to clients on 546. DHCP relay (giaddr / RELAY-FORW) is
+# served for v4 by selecting the scope whose subnet contains giaddr; v6 relay is
+# not handled (same-link clients only).
+# v4_listen = ["0.0.0.0:67"]
+# v6_listen = ["[::]:547"]

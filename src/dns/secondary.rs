@@ -10,7 +10,7 @@ use time::format_description::well_known::Rfc3339;
 
 use crate::db::Db;
 use crate::dns::axfr;
-use crate::models::{Soa, SUPPORTED_RECORD_TYPES};
+use crate::models::{SUPPORTED_RECORD_TYPES, Soa};
 use crate::state::{AppState, SharedState};
 
 /// Parse a primary address as `ip` or `ip:port` (default port 53).
@@ -128,8 +128,14 @@ pub async fn poll_loop(state: SharedState) {
             match axfr::soa_serial(primary, &origin, signer.as_ref()).await {
                 Ok(remote_serial) => {
                     if remote_serial != sec.serial {
-                        match transfer(&state, sec.zone_id, &sec.name, primary, sec.tsig_key.as_deref())
-                            .await
+                        match transfer(
+                            &state,
+                            sec.zone_id,
+                            &sec.name,
+                            primary,
+                            sec.tsig_key.as_deref(),
+                        )
+                        .await
                         {
                             Ok(n) => tracing::info!(
                                 zone = %sec.name,

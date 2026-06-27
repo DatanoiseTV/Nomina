@@ -9,9 +9,9 @@ use std::time::Duration;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use data_encoding::BASE32_DNSSEC;
+use hickory_proto::dnssec::crypto::EcdsaSigningKey;
 use hickory_proto::dnssec::rdata::{DNSKEY, DNSSECRData, DS, NSEC, NSEC3, NSEC3PARAM, RRSIG};
 use hickory_proto::dnssec::{Algorithm, DigestType, DnssecSigner, Nsec3HashAlgorithm, SigningKey};
-use hickory_proto::dnssec::crypto::EcdsaSigningKey;
 use hickory_proto::rr::domain::Label;
 use hickory_proto::rr::{DNSClass, Name, RData, Record, RecordSet, RecordType};
 use rustls::pki_types::PrivatePkcs8KeyDer;
@@ -79,17 +79,26 @@ impl ZoneSigner {
     }
 
     fn inception() -> OffsetDateTime {
-        OffsetDateTime::from_unix_timestamp(OffsetDateTime::now_utc().unix_timestamp() - CLOCK_SKEW_SECS)
-            .unwrap_or_else(|_| OffsetDateTime::now_utc())
+        OffsetDateTime::from_unix_timestamp(
+            OffsetDateTime::now_utc().unix_timestamp() - CLOCK_SKEW_SECS,
+        )
+        .unwrap_or_else(|_| OffsetDateTime::now_utc())
     }
 
     /// Produce an RRSIG record covering `records` (one RRset of `rtype` at `name`).
-    fn sign_rrset(&self, name: &Name, rtype: RecordType, ttl: u32, records: &[Record]) -> Option<Record> {
+    fn sign_rrset(
+        &self,
+        name: &Name,
+        rtype: RecordType,
+        ttl: u32,
+        records: &[Record],
+    ) -> Option<Record> {
         let mut rrset = RecordSet::new(name.clone(), rtype, 0);
         for r in records {
             rrset.insert(r.clone(), 0);
         }
-        let rrsig = RRSIG::from_rrset(&rrset, DNSClass::IN, Self::inception(), &self.signer).ok()?;
+        let rrsig =
+            RRSIG::from_rrset(&rrset, DNSClass::IN, Self::inception(), &self.signer).ok()?;
         Some(Record::from_rdata(
             name.clone(),
             ttl,
@@ -127,7 +136,8 @@ impl ZoneSigner {
             RData::DNSSEC(DNSSECRData::DNSKEY(self.dnskey.clone())),
         );
         let mut out = vec![rec.clone()];
-        if let Some(sig) = self.sign_rrset(&self.apex, RecordType::DNSKEY, self.default_ttl, &[rec]) {
+        if let Some(sig) = self.sign_rrset(&self.apex, RecordType::DNSKEY, self.default_ttl, &[rec])
+        {
             out.push(sig);
         }
         out
@@ -145,7 +155,8 @@ impl ZoneSigner {
         types.push(RecordType::RRSIG);
         types.push(RecordType::NSEC);
         let nsec = NSEC::new(next, types);
-        let nsec_rec = Record::from_rdata(owner.clone(), ttl, RData::DNSSEC(DNSSECRData::NSEC(nsec)));
+        let nsec_rec =
+            Record::from_rdata(owner.clone(), ttl, RData::DNSSEC(DNSSECRData::NSEC(nsec)));
         let mut out = vec![nsec_rec.clone()];
         if let Some(sig) = self.sign_rrset(owner, RecordType::NSEC, ttl, &[nsec_rec]) {
             out.push(sig);
@@ -202,7 +213,12 @@ impl ZoneSigner {
         let Some(p) = &self.nsec3 else {
             return vec![];
         };
-        let param = NSEC3PARAM::new(Nsec3HashAlgorithm::SHA1, false, p.iterations, p.salt.clone());
+        let param = NSEC3PARAM::new(
+            Nsec3HashAlgorithm::SHA1,
+            false,
+            p.iterations,
+            p.salt.clone(),
+        );
         let rec = Record::from_rdata(
             self.apex.clone(),
             self.default_ttl,

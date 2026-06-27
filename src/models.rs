@@ -156,7 +156,6 @@ pub enum ResolutionMode {
     Off,
 }
 
-
 /// How to order multiple address records in an answer (simple load balancing).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -171,8 +170,7 @@ pub enum LoadBalance {
 }
 
 /// What to return for a blocked name. Serialized values match the API contract.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum BlockMode {
     /// Answer NXDOMAIN. `nx_domain` is accepted for backward compatibility with
     /// settings persisted by earlier builds.
@@ -186,7 +184,6 @@ pub enum BlockMode {
     #[serde(rename = "refused")]
     Refused,
 }
-
 
 /// Protection against IDN homograph / lookalike domains (e.g. a Cyrillic «а» in
 /// `аpple.com`, served on the wire as a `xn--` punycode label).
@@ -205,7 +202,6 @@ pub enum HomographMode {
     AllIdn,
 }
 
-
 /// How much per-query detail to retain for the dashboard. Privacy-aware: `off`
 /// keeps only aggregate, non-identifying counters (the default).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -221,7 +217,6 @@ pub enum QueryLog {
     /// Record full client IPs and names. Opt-in.
     Full,
 }
-
 
 /// A TSIG key (RFC 8945) for authenticating zone transfers. `secret` is the
 /// base64-encoded HMAC key; `algorithm` is e.g. `hmac-sha256`.
@@ -345,7 +340,6 @@ pub enum BlocklistFormat {
     /// Plain domain list, one domain per line.
     Domains,
 }
-
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Blocklist {
@@ -495,6 +489,10 @@ pub struct DhcpScope {
     pub dns_register: bool,
     /// Zone leases register into when `dns_register` is set.
     pub dns_zone: Option<String>,
+    /// The DHCP server's own IPv4 address on this subnet, sent as option 54
+    /// (server identifier) in OFFER/ACK. Required for DHCPv4 serving; ignored
+    /// for IPv6 scopes (which derive a server DUID instead).
+    pub server_id: Option<String>,
     /// Options served to clients of this scope.
     pub options: Vec<DhcpOption>,
     pub created_at: String,
@@ -580,8 +578,26 @@ pub const ROOT_SERVERS: &[&str] = &[
 /// Record types Nomina lets users manage. `SOA` is excluded (managed via the
 /// zone) as are DNSSEC/transfer pseudo-types.
 pub const SUPPORTED_RECORD_TYPES: &[&str] = &[
-    "A", "AAAA", "ANAME", "CAA", "CERT", "CNAME", "CSYNC", "HINFO", "HTTPS", "MX",
-    "NAPTR", "NS", "OPENPGPKEY", "PTR", "SMIMEA", "SRV", "SSHFP", "SVCB", "TLSA", "TXT",
+    "A",
+    "AAAA",
+    "ANAME",
+    "CAA",
+    "CERT",
+    "CNAME",
+    "CSYNC",
+    "HINFO",
+    "HTTPS",
+    "MX",
+    "NAPTR",
+    "NS",
+    "OPENPGPKEY",
+    "PTR",
+    "SMIMEA",
+    "SRV",
+    "SSHFP",
+    "SVCB",
+    "TLSA",
+    "TXT",
 ];
 
 /// Parse a textual record type into the hickory enum, restricted to the
@@ -602,8 +618,7 @@ pub fn canonical_zone_name(name: &str) -> Result<String, String> {
         return Err("zone name must not be empty".into());
     }
     // Validate by parsing as a DNS name.
-    Name::from_utf8(format!("{trimmed}."))
-        .map_err(|e| format!("invalid zone name: {e}"))?;
+    Name::from_utf8(format!("{trimmed}.")).map_err(|e| format!("invalid zone name: {e}"))?;
     Ok(trimmed)
 }
 
@@ -668,7 +683,13 @@ fn prequalify_data(rtype: RecordType, data: &str, zone: &str) -> String {
             // "<prio> <weight> <port> <target>"
             let parts: Vec<&str> = data.split_whitespace().collect();
             if parts.len() == 4 {
-                format!("{} {} {} {}", parts[0], parts[1], parts[2], qualify(parts[3]))
+                format!(
+                    "{} {} {} {}",
+                    parts[0],
+                    parts[1],
+                    parts[2],
+                    qualify(parts[3])
+                )
             } else {
                 data.to_string()
             }
@@ -695,7 +716,11 @@ pub fn soa_rname(admin: &str) -> Result<Name, String> {
     } else {
         s.to_string()
     };
-    let dns = if dns.ends_with('.') { dns } else { format!("{dns}.") };
+    let dns = if dns.ends_with('.') {
+        dns
+    } else {
+        format!("{dns}.")
+    };
     let mut name = Name::from_utf8(&dns).map_err(|e| format!("invalid admin email: {e}"))?;
     name.set_fqdn(true);
     Ok(name)
@@ -773,7 +798,10 @@ mod tests {
             ("HINFO", "\"Intel\" \"Linux\""),
             ("HTTPS", "1 . alpn=\"h2\""),
             ("MX", "10 mail.example.com."),
-            ("NAPTR", "100 10 \"U\" \"E2U+sip\" \"!^.*$!sip:info@example.com!\" ."),
+            (
+                "NAPTR",
+                "100 10 \"U\" \"E2U+sip\" \"!^.*$!sip:info@example.com!\" .",
+            ),
             ("NS", "ns1.example.com."),
             ("OPENPGPKEY", "aGVsbG8gd29ybGQ="),
             ("PTR", "host.example.com."),

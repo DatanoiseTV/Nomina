@@ -183,6 +183,7 @@ mod tests {
             lease_secs: 3600,
             dns_register: false,
             dns_zone: None,
+            server_id: None,
             options: vec![],
             created_at: rfc3339(0),
         }
@@ -322,6 +323,7 @@ mod tests {
             lease_secs: 3600,
             dns_register: false,
             dns_zone: None,
+            server_id: None,
             options: vec![],
             created_at: rfc3339(0),
         };

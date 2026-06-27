@@ -13,5 +13,6 @@
 
 pub mod lease;
 pub mod options;
+pub mod server;
 pub mod v4;
 pub mod v6;

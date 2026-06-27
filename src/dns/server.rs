@@ -125,7 +125,10 @@ pub async fn run(
         None => {}
     }
 
-    server.block_until_done().await.context("DNS server failed")?;
+    server
+        .block_until_done()
+        .await
+        .context("DNS server failed")?;
     Ok(())
 }
 
