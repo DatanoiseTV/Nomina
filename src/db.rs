@@ -92,6 +92,13 @@ fn json_err(e: serde_json::Error) -> diesel::result::Error {
     diesel::result::Error::SerializationError(Box::new(e))
 }
 
+/// Map a malformed stored enum string (family/state) to a deserialization
+/// error. Internal only — only reachable if the DB holds a value we never wrote.
+#[allow(dead_code)] // used by the Phase 1 DHCP row decoders.
+fn enum_err(what: &str) -> diesel::result::Error {
+    diesel::result::Error::DeserializationError(format!("invalid stored {what}").into())
+}
+
 /// Parse a stored comma-separated hostname list into normalized FQDNs.
 fn split_hostnames(csv: &str) -> Vec<String> {
     csv.split(',')
@@ -1781,6 +1788,414 @@ impl Db {
     }
 }
 
+// Phase 1 DHCP foundation: these query helpers are consumed by the later DHCP
+// serving/API phases, so they have no in-crate caller yet (the unit tests below
+// exercise them). The allow keeps the staged code warning-free.
+#[allow(dead_code)]
+impl Db {
+    // ----- DHCP scopes -----------------------------------------------------
+
+    pub fn list_dhcp_scopes(conn: &mut SqliteConnection) -> QueryResult<Vec<DhcpScope>> {
+        dhcp_scopes::table
+            .select(Self::DHCP_SCOPE_COLS)
+            .order(dhcp_scopes::name.asc())
+            .load::<DhcpScopeTuple>(conn)?
+            .into_iter()
+            .map(Self::dhcp_scope_from)
+            .collect()
+    }
+
+    pub fn dhcp_scope(conn: &mut SqliteConnection, id: i64) -> QueryResult<Option<DhcpScope>> {
+        dhcp_scopes::table
+            .filter(dhcp_scopes::id.eq(id))
+            .select(Self::DHCP_SCOPE_COLS)
+            .first::<DhcpScopeTuple>(conn)
+            .optional()?
+            .map(Self::dhcp_scope_from)
+            .transpose()
+    }
+
+    pub fn create_dhcp_scope(
+        conn: &mut SqliteConnection,
+        name: &str,
+        enabled: bool,
+        family: IpFamily,
+        subnet: &str,
+        range_start: &str,
+        range_end: &str,
+        lease_secs: u32,
+        dns_register: bool,
+        dns_zone: Option<&str>,
+        options: &[DhcpOption],
+    ) -> QueryResult<i64> {
+        let opts = serde_json::to_string(options).map_err(json_err)?;
+        diesel::insert_into(dhcp_scopes::table)
+            .values((
+                dhcp_scopes::name.eq(name),
+                dhcp_scopes::enabled.eq(enabled),
+                dhcp_scopes::family.eq(enum_to_str(&family)),
+                dhcp_scopes::subnet.eq(subnet),
+                dhcp_scopes::range_start.eq(range_start),
+                dhcp_scopes::range_end.eq(range_end),
+                dhcp_scopes::lease_secs.eq(lease_secs as i64),
+                dhcp_scopes::dns_register.eq(dns_register),
+                dhcp_scopes::dns_zone.eq(dns_zone),
+                dhcp_scopes::options.eq(opts),
+                dhcp_scopes::created_at.eq(now()),
+            ))
+            .returning(dhcp_scopes::id)
+            .get_result(conn)
+    }
+
+    pub fn update_dhcp_scope(
+        conn: &mut SqliteConnection,
+        id: i64,
+        name: Option<&str>,
+        enabled: Option<bool>,
+        subnet: Option<&str>,
+        range_start: Option<&str>,
+        range_end: Option<&str>,
+        lease_secs: Option<u32>,
+        dns_register: Option<bool>,
+        dns_zone: Option<Option<&str>>,
+        options: Option<&[DhcpOption]>,
+    ) -> QueryResult<()> {
+        if let Some(v) = name {
+            diesel::update(dhcp_scopes::table.filter(dhcp_scopes::id.eq(id)))
+                .set(dhcp_scopes::name.eq(v))
+                .execute(conn)?;
+        }
+        if let Some(v) = enabled {
+            diesel::update(dhcp_scopes::table.filter(dhcp_scopes::id.eq(id)))
+                .set(dhcp_scopes::enabled.eq(v))
+                .execute(conn)?;
+        }
+        if let Some(v) = subnet {
+            diesel::update(dhcp_scopes::table.filter(dhcp_scopes::id.eq(id)))
+                .set(dhcp_scopes::subnet.eq(v))
+                .execute(conn)?;
+        }
+        if let Some(v) = range_start {
+            diesel::update(dhcp_scopes::table.filter(dhcp_scopes::id.eq(id)))
+                .set(dhcp_scopes::range_start.eq(v))
+                .execute(conn)?;
+        }
+        if let Some(v) = range_end {
+            diesel::update(dhcp_scopes::table.filter(dhcp_scopes::id.eq(id)))
+                .set(dhcp_scopes::range_end.eq(v))
+                .execute(conn)?;
+        }
+        if let Some(v) = lease_secs {
+            diesel::update(dhcp_scopes::table.filter(dhcp_scopes::id.eq(id)))
+                .set(dhcp_scopes::lease_secs.eq(v as i64))
+                .execute(conn)?;
+        }
+        if let Some(v) = dns_register {
+            diesel::update(dhcp_scopes::table.filter(dhcp_scopes::id.eq(id)))
+                .set(dhcp_scopes::dns_register.eq(v))
+                .execute(conn)?;
+        }
+        if let Some(v) = dns_zone {
+            diesel::update(dhcp_scopes::table.filter(dhcp_scopes::id.eq(id)))
+                .set(dhcp_scopes::dns_zone.eq(v))
+                .execute(conn)?;
+        }
+        if let Some(v) = options {
+            let json = serde_json::to_string(v).map_err(json_err)?;
+            diesel::update(dhcp_scopes::table.filter(dhcp_scopes::id.eq(id)))
+                .set(dhcp_scopes::options.eq(json))
+                .execute(conn)?;
+        }
+        Ok(())
+    }
+
+    pub fn delete_dhcp_scope(conn: &mut SqliteConnection, id: i64) -> QueryResult<()> {
+        diesel::delete(dhcp_scopes::table.filter(dhcp_scopes::id.eq(id)))
+            .execute(conn)
+            .map(|_| ())
+    }
+
+    const DHCP_SCOPE_COLS: (
+        dhcp_scopes::id,
+        dhcp_scopes::name,
+        dhcp_scopes::enabled,
+        dhcp_scopes::family,
+        dhcp_scopes::subnet,
+        dhcp_scopes::range_start,
+        dhcp_scopes::range_end,
+        dhcp_scopes::lease_secs,
+        dhcp_scopes::dns_register,
+        dhcp_scopes::dns_zone,
+        dhcp_scopes::options,
+        dhcp_scopes::created_at,
+    ) = (
+        dhcp_scopes::id,
+        dhcp_scopes::name,
+        dhcp_scopes::enabled,
+        dhcp_scopes::family,
+        dhcp_scopes::subnet,
+        dhcp_scopes::range_start,
+        dhcp_scopes::range_end,
+        dhcp_scopes::lease_secs,
+        dhcp_scopes::dns_register,
+        dhcp_scopes::dns_zone,
+        dhcp_scopes::options,
+        dhcp_scopes::created_at,
+    );
+
+    fn dhcp_scope_from(t: DhcpScopeTuple) -> QueryResult<DhcpScope> {
+        let family = enum_from_str(&t.3).ok_or_else(|| enum_err("DHCP scope family"))?;
+        let options: Vec<DhcpOption> = serde_json::from_str(&t.10).map_err(json_err)?;
+        Ok(DhcpScope {
+            id: t.0,
+            name: t.1,
+            enabled: t.2,
+            family,
+            subnet: t.4,
+            range_start: t.5,
+            range_end: t.6,
+            lease_secs: t.7 as u32,
+            dns_register: t.8,
+            dns_zone: t.9,
+            options,
+            created_at: t.11,
+        })
+    }
+
+    // ----- DHCP reservations ----------------------------------------------
+
+    pub fn list_dhcp_reservations(
+        conn: &mut SqliteConnection,
+        scope_id: i64,
+    ) -> QueryResult<Vec<DhcpReservation>> {
+        dhcp_reservations::table
+            .filter(dhcp_reservations::scope_id.eq(scope_id))
+            .select((
+                dhcp_reservations::id,
+                dhcp_reservations::scope_id,
+                dhcp_reservations::identifier,
+                dhcp_reservations::ip,
+                dhcp_reservations::hostname,
+                dhcp_reservations::options,
+                dhcp_reservations::created_at,
+            ))
+            .order(dhcp_reservations::ip.asc())
+            .load::<(i64, i64, String, String, Option<String>, String, String)>(conn)?
+            .into_iter()
+            .map(Self::dhcp_reservation_from)
+            .collect()
+    }
+
+    pub fn create_dhcp_reservation(
+        conn: &mut SqliteConnection,
+        scope_id: i64,
+        identifier: &str,
+        ip: &str,
+        hostname: Option<&str>,
+        options: &[DhcpOption],
+    ) -> QueryResult<i64> {
+        let opts = serde_json::to_string(options).map_err(json_err)?;
+        diesel::insert_into(dhcp_reservations::table)
+            .values((
+                dhcp_reservations::scope_id.eq(scope_id),
+                dhcp_reservations::identifier.eq(identifier.to_ascii_lowercase()),
+                dhcp_reservations::ip.eq(ip),
+                dhcp_reservations::hostname.eq(hostname),
+                dhcp_reservations::options.eq(opts),
+                dhcp_reservations::created_at.eq(now()),
+            ))
+            .returning(dhcp_reservations::id)
+            .get_result(conn)
+    }
+
+    pub fn update_dhcp_reservation(
+        conn: &mut SqliteConnection,
+        id: i64,
+        identifier: Option<&str>,
+        ip: Option<&str>,
+        hostname: Option<Option<&str>>,
+        options: Option<&[DhcpOption]>,
+    ) -> QueryResult<()> {
+        if let Some(v) = identifier {
+            diesel::update(dhcp_reservations::table.filter(dhcp_reservations::id.eq(id)))
+                .set(dhcp_reservations::identifier.eq(v.to_ascii_lowercase()))
+                .execute(conn)?;
+        }
+        if let Some(v) = ip {
+            diesel::update(dhcp_reservations::table.filter(dhcp_reservations::id.eq(id)))
+                .set(dhcp_reservations::ip.eq(v))
+                .execute(conn)?;
+        }
+        if let Some(v) = hostname {
+            diesel::update(dhcp_reservations::table.filter(dhcp_reservations::id.eq(id)))
+                .set(dhcp_reservations::hostname.eq(v))
+                .execute(conn)?;
+        }
+        if let Some(v) = options {
+            let json = serde_json::to_string(v).map_err(json_err)?;
+            diesel::update(dhcp_reservations::table.filter(dhcp_reservations::id.eq(id)))
+                .set(dhcp_reservations::options.eq(json))
+                .execute(conn)?;
+        }
+        Ok(())
+    }
+
+    pub fn delete_dhcp_reservation(conn: &mut SqliteConnection, id: i64) -> QueryResult<()> {
+        diesel::delete(dhcp_reservations::table.filter(dhcp_reservations::id.eq(id)))
+            .execute(conn)
+            .map(|_| ())
+    }
+
+    fn dhcp_reservation_from(
+        t: (i64, i64, String, String, Option<String>, String, String),
+    ) -> QueryResult<DhcpReservation> {
+        let options: Vec<DhcpOption> = serde_json::from_str(&t.5).map_err(json_err)?;
+        Ok(DhcpReservation {
+            id: t.0,
+            scope_id: t.1,
+            identifier: t.2,
+            ip: t.3,
+            hostname: t.4,
+            options,
+            created_at: t.6,
+        })
+    }
+
+    // ----- DHCP leases -----------------------------------------------------
+
+    pub fn list_dhcp_leases(
+        conn: &mut SqliteConnection,
+        scope_id: Option<i64>,
+    ) -> QueryResult<Vec<DhcpLease>> {
+        let cols = (
+            dhcp_leases::id,
+            dhcp_leases::scope_id,
+            dhcp_leases::family,
+            dhcp_leases::ip,
+            dhcp_leases::identifier,
+            dhcp_leases::hostname,
+            dhcp_leases::starts_at,
+            dhcp_leases::expires_at,
+            dhcp_leases::state,
+            dhcp_leases::created_at,
+        );
+        let rows = match scope_id {
+            Some(sid) => dhcp_leases::table
+                .filter(dhcp_leases::scope_id.eq(sid))
+                .select(cols)
+                .order(dhcp_leases::ip.asc())
+                .load::<DhcpLeaseTuple>(conn)?,
+            None => dhcp_leases::table
+                .select(cols)
+                .order(dhcp_leases::ip.asc())
+                .load::<DhcpLeaseTuple>(conn)?,
+        };
+        rows.into_iter().map(Self::dhcp_lease_from).collect()
+    }
+
+    /// Insert or update a lease for `(scope_id, ip)`. Returns the lease id.
+    pub fn upsert_dhcp_lease(
+        conn: &mut SqliteConnection,
+        scope_id: i64,
+        family: IpFamily,
+        ip: &str,
+        identifier: &str,
+        hostname: Option<&str>,
+        starts_at: &str,
+        expires_at: &str,
+        state: LeaseState,
+    ) -> QueryResult<i64> {
+        let fam = enum_to_str(&family);
+        let st = enum_to_str(&state);
+        let ident = identifier.to_ascii_lowercase();
+        diesel::insert_into(dhcp_leases::table)
+            .values((
+                dhcp_leases::scope_id.eq(scope_id),
+                dhcp_leases::family.eq(&fam),
+                dhcp_leases::ip.eq(ip),
+                dhcp_leases::identifier.eq(&ident),
+                dhcp_leases::hostname.eq(hostname),
+                dhcp_leases::starts_at.eq(starts_at),
+                dhcp_leases::expires_at.eq(expires_at),
+                dhcp_leases::state.eq(&st),
+                dhcp_leases::created_at.eq(now()),
+            ))
+            .on_conflict((dhcp_leases::scope_id, dhcp_leases::ip))
+            .do_update()
+            .set((
+                dhcp_leases::family.eq(&fam),
+                dhcp_leases::identifier.eq(&ident),
+                dhcp_leases::hostname.eq(hostname),
+                dhcp_leases::starts_at.eq(starts_at),
+                dhcp_leases::expires_at.eq(expires_at),
+                dhcp_leases::state.eq(&st),
+            ))
+            .returning(dhcp_leases::id)
+            .get_result(conn)
+    }
+
+    pub fn delete_dhcp_lease(conn: &mut SqliteConnection, id: i64) -> QueryResult<()> {
+        diesel::delete(dhcp_leases::table.filter(dhcp_leases::id.eq(id)))
+            .execute(conn)
+            .map(|_| ())
+    }
+
+    /// Delete leases whose `expires_at` is before `now` (RFC3339). Returns the
+    /// number removed.
+    pub fn prune_expired_leases(conn: &mut SqliteConnection, now: &str) -> QueryResult<usize> {
+        diesel::delete(dhcp_leases::table.filter(dhcp_leases::expires_at.lt(now))).execute(conn)
+    }
+
+    fn dhcp_lease_from(t: DhcpLeaseTuple) -> QueryResult<DhcpLease> {
+        let family = enum_from_str(&t.2).ok_or_else(|| enum_err("DHCP lease family"))?;
+        let state = enum_from_str(&t.8).ok_or_else(|| enum_err("DHCP lease state"))?;
+        Ok(DhcpLease {
+            id: t.0,
+            scope_id: t.1,
+            family,
+            ip: t.3,
+            identifier: t.4,
+            hostname: t.5,
+            starts_at: t.6,
+            expires_at: t.7,
+            state,
+            created_at: t.9,
+        })
+    }
+}
+
+/// The column tuple type used for [`DhcpScope`] reads.
+#[allow(dead_code)]
+type DhcpScopeTuple = (
+    i64,
+    String,
+    bool,
+    String,
+    String,
+    String,
+    String,
+    i64,
+    bool,
+    Option<String>,
+    String,
+    String,
+);
+
+/// The column tuple type used for [`DhcpLease`] reads.
+#[allow(dead_code)]
+type DhcpLeaseTuple = (
+    i64,
+    i64,
+    String,
+    String,
+    String,
+    Option<String>,
+    String,
+    String,
+    String,
+    String,
+);
+
 /// The column tuple type used for [`DnsRecord`] reads.
 type RecordTuple = (
     i64,
@@ -1805,4 +2220,188 @@ fn enum_to_str<T: serde::Serialize>(v: &T) -> String {
 
 fn enum_from_str<T: serde::de::DeserializeOwned>(s: &str) -> Option<T> {
     serde_json::from_value(serde_json::Value::String(s.to_string())).ok()
+}
+
+#[cfg(test)]
+mod dhcp_tests {
+    use super::*;
+    use crate::models::{DhcpOption, DhcpOptionKind};
+
+    fn opt() -> DhcpOption {
+        DhcpOption {
+            code: 6,
+            name: Some("Domain Name Server".into()),
+            value: "192.168.1.1".into(),
+            kind: DhcpOptionKind::IpList,
+        }
+    }
+
+    #[test]
+    fn scope_crud_roundtrip() {
+        let db = Db::open_in_memory().unwrap();
+        db.with(|c| {
+            let id = Db::create_dhcp_scope(
+                c,
+                "lan",
+                true,
+                IpFamily::V4,
+                "192.168.1.0/24",
+                "192.168.1.100",
+                "192.168.1.200",
+                3600,
+                true,
+                Some("home.lan"),
+                &[opt()],
+            )?;
+            let s = Db::dhcp_scope(c, id)?.expect("scope exists");
+            assert_eq!(s.name, "lan");
+            assert_eq!(s.family, IpFamily::V4);
+            assert_eq!(s.range_end, "192.168.1.200");
+            assert_eq!(s.lease_secs, 3600);
+            assert!(s.dns_register);
+            assert_eq!(s.dns_zone.as_deref(), Some("home.lan"));
+            assert_eq!(s.options.len(), 1);
+            assert_eq!(s.options[0].code, 6);
+
+            Db::update_dhcp_scope(
+                c,
+                id,
+                Some("lan2"),
+                Some(false),
+                None,
+                None,
+                Some("192.168.1.250"),
+                Some(7200),
+                None,
+                Some(None),
+                Some::<&[DhcpOption]>(&[]),
+            )?;
+            let s2 = Db::dhcp_scope(c, id)?.unwrap();
+            assert_eq!(s2.name, "lan2");
+            assert!(!s2.enabled);
+            assert_eq!(s2.range_end, "192.168.1.250");
+            assert_eq!(s2.lease_secs, 7200);
+            assert_eq!(s2.dns_zone, None);
+            assert!(s2.options.is_empty());
+
+            assert_eq!(Db::list_dhcp_scopes(c)?.len(), 1);
+            Db::delete_dhcp_scope(c, id)?;
+            assert!(Db::dhcp_scope(c, id)?.is_none());
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn reservation_crud_and_cascade() {
+        let db = Db::open_in_memory().unwrap();
+        db.with(|c| {
+            let sid = Db::create_dhcp_scope(
+                c,
+                "lan",
+                true,
+                IpFamily::V4,
+                "10.0.0.0/24",
+                "10.0.0.10",
+                "10.0.0.20",
+                3600,
+                false,
+                None,
+                &[],
+            )?;
+            let rid = Db::create_dhcp_reservation(
+                c,
+                sid,
+                "AA:BB:CC:DD:EE:FF",
+                "10.0.0.5",
+                Some("printer"),
+                &[],
+            )?;
+            let list = Db::list_dhcp_reservations(c, sid)?;
+            assert_eq!(list.len(), 1);
+            // Identifier is normalized lowercase on write.
+            assert_eq!(list[0].identifier, "aa:bb:cc:dd:ee:ff");
+            assert_eq!(list[0].hostname.as_deref(), Some("printer"));
+
+            Db::update_dhcp_reservation(c, rid, None, Some("10.0.0.6"), Some(None), None)?;
+            let list2 = Db::list_dhcp_reservations(c, sid)?;
+            assert_eq!(list2[0].ip, "10.0.0.6");
+            assert_eq!(list2[0].hostname, None);
+
+            // Deleting the scope cascades to reservations (FK ON DELETE CASCADE).
+            Db::delete_dhcp_scope(c, sid)?;
+            assert!(Db::list_dhcp_reservations(c, sid)?.is_empty());
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn lease_upsert_list_and_prune() {
+        let db = Db::open_in_memory().unwrap();
+        db.with(|c| {
+            let sid = Db::create_dhcp_scope(
+                c,
+                "lan",
+                true,
+                IpFamily::V4,
+                "10.0.0.0/24",
+                "10.0.0.10",
+                "10.0.0.20",
+                3600,
+                false,
+                None,
+                &[],
+            )?;
+            let id1 = Db::upsert_dhcp_lease(
+                c,
+                sid,
+                IpFamily::V4,
+                "10.0.0.10",
+                "AA:BB:CC:00:00:01",
+                Some("host-a"),
+                "2026-01-01T00:00:00Z",
+                "2999-01-01T00:00:00Z",
+                LeaseState::Active,
+            )?;
+            // Re-upsert same (scope, ip) updates rather than inserts; same id.
+            let id2 = Db::upsert_dhcp_lease(
+                c,
+                sid,
+                IpFamily::V4,
+                "10.0.0.10",
+                "AA:BB:CC:00:00:02",
+                None,
+                "2026-01-01T00:00:00Z",
+                "2999-01-01T00:00:00Z",
+                LeaseState::Active,
+            )?;
+            assert_eq!(id1, id2);
+            let all = Db::list_dhcp_leases(c, Some(sid))?;
+            assert_eq!(all.len(), 1);
+            assert_eq!(all[0].identifier, "aa:bb:cc:00:00:02");
+
+            // A second, already-expired lease.
+            Db::upsert_dhcp_lease(
+                c,
+                sid,
+                IpFamily::V4,
+                "10.0.0.11",
+                "AA:BB:CC:00:00:03",
+                None,
+                "2000-01-01T00:00:00Z",
+                "2000-01-02T00:00:00Z",
+                LeaseState::Expired,
+            )?;
+            assert_eq!(Db::list_dhcp_leases(c, None)?.len(), 2);
+
+            let removed = Db::prune_expired_leases(c, "2026-06-26T00:00:00Z")?;
+            assert_eq!(removed, 1);
+            let rest = Db::list_dhcp_leases(c, Some(sid))?;
+            assert_eq!(rest.len(), 1);
+            assert_eq!(rest[0].ip, "10.0.0.10");
+            Ok(())
+        })
+        .unwrap();
+    }
 }

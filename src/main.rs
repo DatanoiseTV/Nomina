@@ -7,6 +7,7 @@
 
 mod config;
 mod db;
+mod dhcp;
 mod dns;
 mod error;
 mod filter;

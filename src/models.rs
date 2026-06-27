@@ -404,6 +404,137 @@ pub struct ConditionalForward {
     pub created_at: String,
 }
 
+// ---------------------------------------------------------------------------
+// DHCP
+// ---------------------------------------------------------------------------
+
+/// IP family a DHCP scope serves.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+#[allow(dead_code)]
+pub enum IpFamily {
+    V4,
+    V6,
+}
+
+/// Lifecycle state of a DHCP lease.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+#[allow(dead_code)]
+pub enum LeaseState {
+    /// Offered in a DHCPOFFER / ADVERTISE but not yet confirmed.
+    Offered,
+    /// Confirmed and in use (REQUEST/ACK granted).
+    Active,
+    /// The client declined the address (DHCPDECLINE) — keep out of the pool.
+    Declined,
+    /// The client released the address (DHCPRELEASE).
+    Released,
+    /// Past its expiry; reclaimable.
+    Expired,
+}
+
+/// The typed encoding of a user-entered DHCP option value. Determines how the
+/// human-readable `value` string in [`DhcpOption`] is turned into wire bytes.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[allow(dead_code)]
+pub enum DhcpOptionKind {
+    /// A single IP address (4 bytes for v4, 16 for v6).
+    Ip,
+    /// A list of IP addresses, concatenated on the wire.
+    IpList,
+    /// An unsigned 8-bit integer.
+    U8,
+    /// An unsigned 16-bit integer (big-endian).
+    U16,
+    /// An unsigned 32-bit integer (big-endian).
+    U32,
+    /// A boolean, encoded as a single 0/1 byte.
+    Bool,
+    /// A UTF-8 text string.
+    Text,
+    /// Raw bytes entered as a hex string (colons/spaces ignored).
+    Hex,
+}
+
+/// A user-addable DHCP option. Any `code` is permitted; well-known codes get a
+/// display `name` and `kind` from the option registry, but arbitrary codes can
+/// be added with an explicit `kind`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[allow(dead_code)]
+pub struct DhcpOption {
+    /// Option code. 0-255 for DHCPv4; the wider 16-bit space for DHCPv6.
+    pub code: u16,
+    /// Display name (informational only; never affects encoding).
+    #[serde(default)]
+    pub name: Option<String>,
+    /// The human-entered value, interpreted per `kind`.
+    pub value: String,
+    /// How `value` is encoded to wire bytes.
+    pub kind: DhcpOptionKind,
+}
+
+/// A DHCP address pool plus its served options.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
+pub struct DhcpScope {
+    pub id: i64,
+    pub name: String,
+    pub enabled: bool,
+    pub family: IpFamily,
+    /// The served subnet in CIDR form (e.g. `192.168.1.0/24`).
+    pub subnet: String,
+    /// First address of the dynamic pool (inclusive).
+    pub range_start: String,
+    /// Last address of the dynamic pool (inclusive).
+    pub range_end: String,
+    /// Default lease duration in seconds.
+    pub lease_secs: u32,
+    /// Whether granted leases should register A/AAAA + PTR records in DNS.
+    pub dns_register: bool,
+    /// Zone leases register into when `dns_register` is set.
+    pub dns_zone: Option<String>,
+    /// Options served to clients of this scope.
+    pub options: Vec<DhcpOption>,
+    pub created_at: String,
+}
+
+/// A fixed address assignment keyed by client identifier (MAC for v4, DUID for
+/// v6). `identifier` is normalized lowercase.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
+pub struct DhcpReservation {
+    pub id: i64,
+    pub scope_id: i64,
+    /// MAC (v4) or DUID hex (v6), normalized lowercase.
+    pub identifier: String,
+    pub ip: String,
+    pub hostname: Option<String>,
+    /// Per-reservation option overrides (merged over the scope's options).
+    pub options: Vec<DhcpOption>,
+    pub created_at: String,
+}
+
+/// A dynamically allocated lease.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
+pub struct DhcpLease {
+    pub id: i64,
+    pub scope_id: i64,
+    pub family: IpFamily,
+    pub ip: String,
+    /// MAC (v4) or DUID hex (v6), normalized lowercase.
+    pub identifier: String,
+    pub hostname: Option<String>,
+    /// RFC3339 timestamp the lease was granted.
+    pub starts_at: String,
+    /// RFC3339 timestamp the lease expires.
+    pub expires_at: String,
+    pub state: LeaseState,
+    pub created_at: String,
+}
+
 /// Does `pattern` (a domain, optionally `*.`-prefixed) cover `name`? Matches the
 /// domain itself and all subdomains. Both inputs must be lowercase, no trailing
 /// dot.

@@ -164,6 +164,50 @@ diesel::table! {
 }
 
 diesel::table! {
+    dhcp_scopes (id) {
+        id -> BigInt,
+        name -> Text,
+        enabled -> Bool,
+        family -> Text,
+        subnet -> Text,
+        range_start -> Text,
+        range_end -> Text,
+        lease_secs -> BigInt,
+        dns_register -> Bool,
+        dns_zone -> Nullable<Text>,
+        options -> Text,
+        created_at -> Text,
+    }
+}
+
+diesel::table! {
+    dhcp_reservations (id) {
+        id -> BigInt,
+        scope_id -> BigInt,
+        identifier -> Text,
+        ip -> Text,
+        hostname -> Nullable<Text>,
+        options -> Text,
+        created_at -> Text,
+    }
+}
+
+diesel::table! {
+    dhcp_leases (id) {
+        id -> BigInt,
+        scope_id -> BigInt,
+        family -> Text,
+        ip -> Text,
+        identifier -> Text,
+        hostname -> Nullable<Text>,
+        starts_at -> Text,
+        expires_at -> Text,
+        state -> Text,
+        created_at -> Text,
+    }
+}
+
+diesel::table! {
     dyndns_tokens (id) {
         id -> BigInt,
         label -> Text,
