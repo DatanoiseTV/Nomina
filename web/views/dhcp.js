@@ -118,43 +118,92 @@ function leasesTable(leases, reload) {
 }
 
 // ---- options editor -------------------------------------------------------
-// Returns { el, collect() } where collect() yields a Vec<DhcpOption>.
+// User-friendly: pick a named option from the catalog (value field adapts to the
+// option's type and shows the expected format); "Custom" exposes raw code/kind
+// for anything not in the catalog. Returns { el, collect() }.
+const KIND_HINT = {
+  ip: "an IP address",
+  ip_list: "comma-separated IP addresses",
+  u8: "a number (0–255)",
+  u16: "a number",
+  u32: "a number of seconds",
+  bool: "",
+  text: "text",
+  hex: "hex bytes, e.g. 01:a0:ff",
+};
+
 function optionsEditor(initial, catalog) {
+  const byCode = new Map(catalog.map((d) => [d.code, d]));
   const rows = h("div");
-  const makeRow = (opt) => {
-    const code = h("input", { type: "number", value: opt ? opt.code : "", min: 0, max: 65535, style: "width:80px", placeholder: "code" });
-    const kind = h("select", { style: "width:110px" }, KINDS.map((k) => h("option", { value: k, selected: opt && opt.kind === k }, k)));
-    const value = h("input", { type: "text", value: opt ? opt.value : "", placeholder: "value", style: "flex:1" });
+
+  const addRow = (opt) => {
+    const known = opt ? byCode.get(opt.code) : null;
+    const sel = h("select", { style: "flex:0 0 240px" }, [
+      ...catalog.map((d) => h("option", { value: String(d.code), selected: opt && opt.code === d.code }, `${d.name} · ${d.code}`)),
+      h("option", { value: "custom", selected: !!opt && !known }, "Custom option…"),
+    ]);
+    if (!opt) sel.value = catalog.length ? String(catalog[0].code) : "custom";
+
+    const codeIn = h("input", { type: "number", min: 0, max: 65535, placeholder: "code", style: "width:64px",
+      value: opt && !known ? opt.code : "" });
+    const kindIn = h("select", { style: "width:84px" }, KINDS.map((k) => h("option", { value: k, selected: opt && opt.kind === k }, k)));
+    const custom = h("span", { style: "display:flex;gap:4px" }, [codeIn, kindIn]);
+
+    const valHost = h("span", { style: "flex:1;min-width:140px" });
+    const hint = h("span.inline-note", { style: "flex:0 0 100%" });
     const rm = h("button.btn-icon.btn-icon-sm", { type: "button", title: "Remove" }, icon("trash", 15));
-    const row = h("div", { style: "display:flex;gap:6px;align-items:center;margin-bottom:6px" }, [code, kind, value, rm]);
+
+    let getVal = () => "";
+    const curKind = () => (sel.value === "custom" ? kindIn.value : (byCode.get(+sel.value)?.kind || "text"));
+    const curCode = () => (sel.value === "custom" ? parseInt(codeIn.value, 10) : parseInt(sel.value, 10));
+
+    const buildValue = (k, v) => {
+      clear(valHost);
+      if (k === "bool") {
+        const s = h("select", [
+          h("option", { value: "1", selected: v === "1" || v === "true" }, "Yes"),
+          h("option", { value: "0", selected: !(v === "1" || v === "true") }, "No"),
+        ]);
+        valHost.appendChild(s);
+        getVal = () => s.value;
+      } else {
+        const numeric = k === "u8" || k === "u16" || k === "u32";
+        const i = h("input", { type: numeric ? "number" : "text", value: v || "", placeholder: KIND_HINT[k] || "", style: "width:100%" });
+        valHost.appendChild(i);
+        getVal = () => i.value;
+      }
+    };
+    const refresh = (keep) => {
+      custom.style.display = sel.value === "custom" ? "flex" : "none";
+      const k = curKind();
+      buildValue(k, keep ? getVal() : (opt ? opt.value : ""));
+      hint.textContent = KIND_HINT[k] ? `Expects ${KIND_HINT[k]}.` : "";
+    };
+    sel.addEventListener("change", () => refresh(false));
+    kindIn.addEventListener("change", () => refresh(false));
+
+    const row = h("div", { style: "display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px" }, [sel, custom, valHost, rm, hint]);
+    row.collectOpt = () => {
+      const code = curCode();
+      return { code, name: byCode.get(code)?.name || null, kind: curKind(), value: getVal() };
+    };
     rm.addEventListener("click", () => row.remove());
     rows.appendChild(row);
+    refresh(false);
   };
-  (initial || []).forEach(makeRow);
 
-  // "Add common option" picker (prefills code + kind from the catalog).
-  const picker = h("select", { style: "max-width:280px" }, [
-    h("option", { value: "" }, "Add common option…"),
-    ...catalog.map((d) => h("option", { value: JSON.stringify(d) }, `${d.code} — ${d.name}`)),
-  ]);
-  picker.addEventListener("change", () => {
-    if (!picker.value) return;
-    const d = JSON.parse(picker.value);
-    makeRow({ code: d.code, name: d.name, value: "", kind: d.kind });
-    picker.value = "";
-  });
-  const addCustom = h("button.btn.btn-sm", { type: "button" }, [icon("plus", 15), "Custom option"]);
-  addCustom.addEventListener("click", () => makeRow({ code: "", value: "", kind: "text" }));
+  (initial || []).forEach(addRow);
+  const add = h("button.btn.btn-sm", { type: "button" }, [icon("plus", 15), "Add option"]);
+  add.addEventListener("click", () => addRow(null));
 
   const el = h("div", [
-    h("div.hint", { style: "margin-bottom:6px" }, "Any option code is allowed. Common codes prefill their type."),
+    h("div.hint", { style: "margin-bottom:8px" }, "Pick a named option; the value field shows what it expects. Use “Custom” for any other code."),
     rows,
-    h("div", { style: "display:flex;gap:8px;align-items:center;margin-top:4px" }, [picker, addCustom]),
+    add,
   ]);
-  const collect = () => [...rows.children].map((row) => {
-    const [code, kind, value] = row.querySelectorAll("input,select");
-    return { code: parseInt(code.value, 10), kind: kind.value, value: value.value };
-  }).filter((o) => Number.isInteger(o.code));
+  const collect = () => [...rows.children]
+    .map((row) => row.collectOpt())
+    .filter((o) => Number.isInteger(o.code));
   return { el, collect };
 }
 
