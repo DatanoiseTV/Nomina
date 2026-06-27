@@ -1144,13 +1144,29 @@ pub async fn list_blocklists(State(state): State<SharedState>, _auth: Authed) ->
 pub async fn blocklist_catalog(_auth: Authed) -> Response {
     // (name, url, format, category, description)
     let catalog = [
-        ("StevenBlack (unified)", "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts", "hosts", "ads + malware", "Popular unified hosts: ads, malware, fakenews-free base list."),
+        // Ads + tracking (general-purpose)
+        ("StevenBlack (unified)", "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts", "hosts", "ads + tracking", "Popular unified hosts: ads + malware base list."),
+        ("Hagezi Light", "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/hosts/light.txt", "hosts", "ads + tracking", "Smallest Hagezi list — minimal breakage, low-end friendly."),
         ("Hagezi Multi PRO", "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/hosts/pro.txt", "hosts", "ads + tracking", "Balanced, well-maintained ad/tracker/affiliate blocklist."),
+        ("Hagezi Pro++", "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/hosts/pro.plus.txt", "hosts", "ads + tracking", "Aggressive Hagezi list with extra tracking/telemetry."),
+        ("Hagezi Ultimate", "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/hosts/ultimate.txt", "hosts", "ads + tracking", "Maximum-coverage Hagezi list (expect some breakage)."),
         ("1Hosts (Lite)", "https://raw.githubusercontent.com/badmojr/1Hosts/master/Lite/hosts.txt", "hosts", "ads + tracking", "Lightweight, low-false-positive ad/tracker list."),
+        ("1Hosts (Pro)", "https://raw.githubusercontent.com/badmojr/1Hosts/master/Pro/hosts.txt", "hosts", "ads + tracking", "Aggressive 1Hosts variant."),
         ("OISD (small)", "https://small.oisd.nl/domains", "domains", "ads + tracking", "Curated meta-list focused on low breakage."),
+        ("OISD (big)", "https://big.oisd.nl/domains", "domains", "ads + tracking", "Large OISD meta-list combining many sources."),
+        ("AdAway", "https://adaway.org/hosts.txt", "hosts", "ads + tracking", "Mobile ad hosts (AdAway default list)."),
         ("Peter Lowe's list", "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&showintro=0&mimetype=plaintext", "hosts", "ads + tracking", "Long-running ad/tracking server list."),
         ("Dan Pollock (someonewhocares)", "https://someonewhocares.org/hosts/zero/hosts", "hosts", "ads + tracking", "Classic curated hosts file."),
+        ("Frogeye first-party trackers", "https://hostfiles.frogeye.fr/firstparty-trackers-hosts.txt", "hosts", "tracking", "First-party (CNAME-cloaked) tracker hosts."),
+        // Malware / phishing / threat intel
+        ("Hagezi TIF", "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/hosts/tif.txt", "hosts", "malware + phishing", "Hagezi Threat Intelligence Feed: malware, phishing, scams."),
         ("URLhaus malware", "https://urlhaus.abuse.ch/downloads/hostfile/", "hosts", "malware", "abuse.ch malware/payload distribution hosts."),
+        ("Phishing Army (extended)", "https://phishing.army/download/phishing_army_blocklist_extended.txt", "domains", "phishing", "Phishing domains, extended edition."),
+        ("DigitalSide threat-intel", "https://osint.digitalside.it/Threat-Intel/lists/latestdomains.txt", "domains", "malware", "Recently-seen malware/threat domains (OSINT)."),
+        // Privacy / telemetry / misc
+        ("WindowsSpyBlocker", "https://raw.githubusercontent.com/crazy-max/WindowsSpyBlocker/master/data/hosts/spy.txt", "hosts", "telemetry", "Windows telemetry / spying hosts."),
+        ("NoCoin (cryptominers)", "https://raw.githubusercontent.com/hoshsadiq/adblock-nocoin-list/master/hosts.txt", "hosts", "cryptominers", "Block in-browser cryptocurrency miners."),
+        ("OISD NSFW", "https://nsfw.oisd.nl/domains", "domains", "adult", "Adult / NSFW domains (optional family filter)."),
     ];
     let items: Vec<_> = catalog
         .iter()
