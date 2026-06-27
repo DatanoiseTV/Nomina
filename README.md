@@ -1,226 +1,145 @@
 # Nomina
 
-A secure, split-horizon DNS server for homelabs, hobbyists, and small networks —
-in a **single self-contained binary**. Nomina is authoritative for your own
-zones, can forward or recurse for everything else, filters ads and trackers like
+A secure, split-horizon DNS server for homelabs and small networks — in a
+**single self-contained Rust binary**. Nomina is authoritative for your own
+zones, forwards or recurses for everything else, blocks ads and trackers like
 Pi-hole, speaks the modern encrypted transports, and ships with a web UI and a
-JSON API. Written in Rust.
+JSON API.
 
 ```sh
 cargo build --release
 ./target/release/nomina --dns-listen 0.0.0.0:53 --web-listen 127.0.0.1:8053
 ```
 
+<p align="center">
+  <img src="docs/screenshots/dashboard.png" alt="Nomina dashboard" width="800">
+</p>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/request-log.png" alt="Request log"><br><sub><b>Request log</b> — paginated, filterable, with one-click block / allow / rewrite.</sub></td>
+    <td width="50%"><img src="docs/screenshots/zone-editor.png" alt="Zone editor"><br><sub><b>Zone editor</b> — structured per-type records, SOA, and per-zone DNSSEC signing.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/blocklists.png" alt="Blocklist catalog"><br><sub><b>Blocklists</b> — one-click subscribe from a catalog of ~20 well-known lists.</sub></td>
+    <td width="50%"><img src="docs/screenshots/secondary-axfr.png" alt="Secondary zone via AXFR"><br><sub><b>Secondary zones</b> — replicate a zone from a primary over AXFR.</sub></td>
+  </tr>
+</table>
+
 ## Why Nomina
 
 Most DNS tools pick a side. Authoritative servers (BIND, Knot, NSD, PowerDNS,
-CoreDNS) serve your zones but don't block ads or ship a friendly UI. Filtering
-resolvers (Pi-hole, AdGuard Home, Blocky) block ads but aren't authoritative —
-no real zones, no DNSSEC signing, no zone transfers. Nomina does **both**, adds
-**split-horizon views** as a first-class concept, speaks **DoT/DoH/DoQ/DoH3**,
-and is **one static binary** with the database and web UI embedded.
+CoreDNS) serve your zones but don't block ads or ship a UI. Filtering resolvers
+(Pi-hole, AdGuard Home, Blocky) block ads but aren't authoritative — no real
+zones, DNSSEC signing, or zone transfers. **Nomina does both**, adds
+split-horizon **views** as a first-class concept, speaks DoT/DoH/DoQ/DoH3, and is
+one static binary with the database and web UI embedded.
 
-## Highlights
+## Features
 
-- **Split-horizon** — define named **views** by client CIDR (e.g. `internal`
-  vs `external`) and serve different records to each. `nas.home.lan` can answer
-  `10.0.0.5` inside and `203.0.113.5` outside.
-- **Authoritative + resolver** — serve your zones authoritatively and either
-  **forward** to upstreams (1.1.1.1, 9.9.9.9, or DoT/DoH resolvers), **recurse**
-  from the root servers, or run **authoritative-only** for an isolated network.
-- **20 record types** with structured per-type fields in the editor: `A`, `AAAA`,
-  `ANAME`, `CAA`, `CERT`, `CNAME`, `CSYNC`, `HINFO`, `HTTPS`, `MX`, `NAPTR`,
-  `NS`, `OPENPGPKEY`, `PTR`, `SMIMEA`, `SRV`, `SSHFP`, `SVCB`, `TLSA`, `TXT`
-  (plus `SOA`, managed via zone settings).
-- **Filtering (Pi-hole style)** — subscribe to ~20 well-known blocklists from a
-  built-in catalog (Hagezi, OISD, StevenBlack, 1Hosts, URLhaus, Phishing Army,
-  and more) or add your own; manual allow/deny rules; AdGuard-style rewrites.
-  Block with NXDOMAIN, `0.0.0.0`, or REFUSED.
-- **Phishing protection** — block IDN homograph / lookalike domains (e.g.
-  Cyrillic "аpple.com") before they resolve.
-- **DynDNS** — let routers and dynamic-IP clients update A/AAAA records over HTTP
-  via a DynDNS2-compatible `/nic/update` endpoint (ddclient, FRITZ!Box, UniFi,
-  OpenWrt, No-IP). Per-client tokens are scoped to specific hostnames.
-- **DNSSEC** — opt-in per-zone online **signing** (ECDSA P-256) with signed
-  negative answers (NSEC or NSEC3) and DS/DNSKEY export, plus optional **upstream
-  validation** against the IANA root trust anchor.
-- **Modern transports** — plain UDP/TCP, DNS-over-TLS, DNS-over-HTTPS (RFC 8484,
-  GET and POST), DNS-over-QUIC (RFC 9250), and DNS-over-HTTP/3.
-- **Zone transfers, secondaries & import** — serve AXFR/IXFR to IP-allow-listed
-  secondaries, act as a **secondary** (SOA-driven refresh from a primary),
-  optional **TSIG** authentication, and import/export BIND zone files.
-- **Conditional forwarding** — send specific domains to dedicated upstreams,
-  even with the global resolver off.
-- **Observability** — a dashboard with req/s and a sparkline, top domains,
-  per-outcome counters, blocked/dangerous counts, query latency
-  (min/avg/median/max), cache hit-rate, DNSSEC-failure counts, a paginated and
-  filterable **request log** with one-click block/allow/rewrite actions, and a
-  Prometheus `/metrics` endpoint.
-- **Privacy-first** — query logging is **off by default** (aggregate counters
-  only); opt into anonymized (masked IPs) or full logging.
-- **Secure by default** — argon2 logins, server-side sessions (hashed at rest),
-  CSRF protection, login throttling, strict security headers and CSP, selectable
-  bind addresses, an optional management allow-list, and privilege dropping.
-- **Single binary** — SQLite is bundled and the web UI is embedded; schema
-  changes are applied automatically via versioned migrations. No runtime
-  dependencies, no external services.
+- **Split-horizon views** — serve different records per client CIDR (`nas.home.lan`
+  → `10.0.0.5` inside, `203.0.113.5` outside).
+- **Authoritative + resolver** — your zones served authoritatively; everything
+  else **forwarded** (UDP/TCP/DoT/DoH), **recursed** from the roots, or refused
+  (authoritative-only mode). Edge answer cache in front of upstream.
+- **20 record types** with structured per-type fields: A, AAAA, ANAME, CAA, CERT,
+  CNAME, CSYNC, HINFO, HTTPS, MX, NAPTR, NS, OPENPGPKEY, PTR, SMIMEA, SRV, SSHFP,
+  SVCB, TLSA, TXT (+ SOA via zone settings).
+- **Filtering** — subscribe to ~20 well-known blocklists (Hagezi, OISD,
+  StevenBlack, URLhaus, Phishing Army…), manual allow/deny rules, AdGuard-style
+  rewrites, and **IDN-homograph** phishing protection. Block with NXDOMAIN,
+  `0.0.0.0`, or REFUSED.
+- **DNSSEC** — opt-in per-zone online **signing** (ECDSA P-256, NSEC/NSEC3) with
+  DS/DNSKEY export, plus optional **upstream validation**.
+- **Encrypted transports** — DNS-over-TLS, DNS-over-HTTPS (RFC 8484), DNS-over-QUIC
+  (RFC 9250), and DNS-over-HTTP/3.
+- **Zone transfers** — serve AXFR/IXFR to allow-listed secondaries, act as a
+  secondary (SOA-driven refresh), optional **TSIG**; import/export BIND files.
+- **DynDNS** — DynDNS2 `/nic/update` endpoint for routers/clients (ddclient,
+  FRITZ!Box, UniFi, No-IP), with per-client hostname-scoped tokens.
+- **Observability** — dashboard (req/s, latency, cache hit-rate, per-outcome and
+  DNSSEC-failure counts), a searchable request log, and Prometheus `/metrics`.
+- **Secure & private by default** — argon2 logins, server-side sessions, CSRF,
+  strict CSP, privilege dropping, optional management allow-list; query logging
+  **off by default** (or anonymized / full).
 
 ## How it compares
 
-This is a fair, conservative snapshot — check each project's current docs, as
-features change. Nomina's distinguishing trait is the **combination**:
-authoritative + filtering + split-horizon + encrypted transports in one Rust
-binary. **[Technitium DNS](https://technitium.com/dns/) is the closest single-app
-comparison** and is broader and more mature (it also does DHCP); Nomina's edge is
-being a single self-contained Rust binary with split-horizon views as a core
-concept and privacy-first logging.
+A fair, conservative snapshot — features change, so check each project's docs.
+Nomina's distinguishing trait is the *combination* below in one Rust binary.
+[Technitium DNS](https://technitium.com/dns/) is the closest single-app
+comparison and is broader and more mature (it also does DHCP).
 
 | Capability | Nomina | Pi-hole | AdGuard Home | Technitium | BIND 9 | CoreDNS |
-|---|---|---|---|---|---|---|
-| Authoritative zones (full record types) | ✅ | partial¹ | partial¹ | ✅ | ✅ | ✅ |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|
+| Authoritative zones (full types) | ✅ | partial¹ | partial¹ | ✅ | ✅ | ✅ |
 | Split-horizon views | ✅ | ❌ | partial² | ✅ | ✅ | plugin |
 | Recursive resolver | ✅ | via Unbound | ❌ | ✅ | ✅ | ❌ |
-| Forwarding | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Ad/tracker filtering | ✅ | ✅ | ✅ | ✅ | RPZ | plugin |
 | DNSSEC validation | ✅ | via Unbound | ✅ | ✅ | ✅ | ❌ |
-| DNSSEC signing (authoritative) | ✅ | ❌ | ❌ | ✅ | ✅ | plugin |
+| DNSSEC signing | ✅ | ❌ | ❌ | ✅ | ✅ | plugin |
 | DoT/DoH/DoQ **server** | ✅ | ❌³ | ✅ | ✅ | DoT/DoH⁴ | DoT/DoH |
 | AXFR / secondary | ✅ | ❌ | ❌ | ✅ | ✅ | plugin |
-| DynDNS-style HTTP update | ✅ | ❌ | ❌ | partial⁵ | RFC 2136⁵ | ❌ |
+| DynDNS HTTP update | ✅ | ❌ | ❌ | partial⁵ | RFC 2136⁵ | ❌ |
 | Built-in web UI | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
 | Single self-contained binary | ✅ | ❌ | ✅ | ❌⁶ | ❌ | ✅ |
-| DHCP server | ❌ | ✅ | ✅ | ✅ | ❌⁷ | ❌ |
+| DHCP server | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ |
 | Language | Rust | C/PHP | Go | C#/.NET | C | Go |
 
-¹ Pi-hole and AdGuard Home support local DNS records / rewrites, not full
-authoritative zones with arbitrary record types, DNSSEC signing, or AXFR.
-² AdGuard Home has client-specific rules, not CIDR-view-based zones.
-³ Pi-hole needs a separate proxy (e.g. cloudflared) for encrypted DNS.
-⁴ BIND added DoT/DoH in 9.18+.
-⁵ Technitium supports dynamic updates via its API; BIND uses RFC 2136 dynamic
-update, not the HTTP DynDNS2 protocol routers speak. Nomina implements the
-DynDNS2 `/nic/update` endpoint directly.
-⁶ Technitium runs on .NET (self-contained builds exist but bundle the runtime).
-⁷ DHCP is provided by separate ISC software, not BIND itself.
+<sub>¹ local records/rewrites, not full zones/DNSSEC-signing/AXFR. ² client-specific
+rules, not CIDR views. ³ needs a separate proxy. ⁴ BIND 9.18+. ⁵ Technitium via
+its API; BIND via RFC 2136 — neither is the HTTP DynDNS2 protocol routers speak.
+⁶ runs on .NET.</sub>
 
-**What Nomina does not (yet) do:** no DHCP server, no GeoDNS/geo-aware answers
-(on the roadmap), and it's young — it doesn't have the maturity, scale hardening,
-or community of BIND/Technitium. For a pure recursive resolver, Unbound is
-lighter; for a pure authoritative server at scale, Knot/NSD are battle-tested.
+**Not (yet) in Nomina:** no DHCP, no GeoDNS (roadmap), and it's young — it lacks
+the maturity and scale hardening of BIND/Technitium. For a pure recursor, Unbound
+is lighter; for authoritative-at-scale, Knot/NSD are battle-tested.
 
 ## Quick start
 
 ```sh
 cargo build --release
-# Serve DNS on a non-privileged port and the UI locally (no root needed):
+# DNS on a high port + UI locally (no root needed):
 ./target/release/nomina --dns-listen 127.0.0.1:5353 --web-listen 127.0.0.1:8053
-```
-
-Open `http://127.0.0.1:8053`, create the admin account on first run, then add a
-zone, records, and views. Test it:
-
-```sh
 dig @127.0.0.1 -p 5353 nas.home.lan A
 ```
 
-### Configuration
+Open `http://127.0.0.1:8053`, create the admin account, then add a zone, records,
+and views.
 
-Everything operational is managed at runtime via the UI/API and stored in the
-database (SQLite, with automatic migrations). Listen sockets, TLS, bind
-addresses, and privilege settings come from a TOML file — see
-[`nomina.example.toml`](nomina.example.toml):
+Operational state lives in the database (SQLite, auto-migrated). Listen sockets,
+TLS, bind addresses, and privileges come from a TOML file — see
+[`nomina.example.toml`](nomina.example.toml). Key flags override it:
+`--dns-listen`/`--dot-listen`/`--doh-listen`/`--doq-listen`/`--doh3-listen`
+(repeatable), `--web-listen`, `--web-tls`, `--hostname`, `--data-dir`, `--log`.
 
-```sh
-./nomina --config nomina.toml
-```
-
-Key CLI flags (override the config): `--dns-listen` (repeatable), `--dot-listen`,
-`--doh-listen`, `--doq-listen`, `--doh3-listen`, `--web-listen`, `--web-tls`,
-`--hostname`, `--data-dir`, `--log`.
-
-### Privileged ports with privilege dropping
-
-```toml
-# nomina.toml
-[dns]
-listen = ["0.0.0.0:53"]
-dot_listen = ["0.0.0.0:853"]
-doh_listen = ["0.0.0.0:443"]
-
-[web]
-listen = "192.168.1.2:8053"   # LAN only, not public
-tls = true
-
-[privileges]
-user = "nomina"               # bind as root, then drop
-group = "nomina"
-```
-
-Start as root; Nomina binds the privileged sockets, then drops to `nomina`.
-Ensure `data_dir` is writable by that user.
-
-### Running as a service (systemd)
-
-```ini
-# /etc/systemd/system/nomina.service
-[Unit]
-Description=Nomina DNS server
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-ExecStart=/usr/local/bin/nomina --config /etc/nomina/nomina.toml --data-dir /var/lib/nomina
-AmbientCapabilities=CAP_NET_BIND_SERVICE
-Restart=on-failure
-DynamicUser=yes
-StateDirectory=nomina
-
-[Install]
-WantedBy=multi-user.target
-```
+For privileged ports, run as root with a `[privileges]` user/group — Nomina binds
+the sockets, then drops privileges (or grant `CAP_NET_BIND_SERVICE` under
+systemd). The full config reference is in
+[`nomina.example.toml`](nomina.example.toml).
 
 ## Architecture
 
-- The DNS hot path reads an **in-memory store** (zones/records/views pre-parsed)
-  and a **filter set** (blocklists/rules/rewrites); both are rebuilt from SQLite
-  and atomically swapped on any change — queries never block on the database.
-- All transports funnel through one resolution core:
-  **local zones → rewrite → allow → block → conditional forward → upstream
-  (forward/recurse) → REFUSED**.
-- A small edge cache sits in front of the upstream resolver.
-- Persistence is Diesel + SQLite (bundled) with versioned migrations applied on
-  startup. TLS uses a single ring-backed rustls provider shared by the web UI,
-  DoT, DoH, DoQ, and encrypted upstreams. The release build keeps unwinding
-  panics so a malformed packet can never abort the process.
-
-The management API contract is the source of truth at
+The DNS hot path reads an in-memory store (zones/records/views) and filter set,
+rebuilt from SQLite and atomically swapped on change — queries never block on the
+database. All transports funnel through one core:
+**local zones → rewrite → allow → block → conditional forward → upstream →
+REFUSED**. Persistence is Diesel + bundled SQLite with versioned migrations.
+The release build keeps unwinding panics so a malformed packet can't abort the
+process. The JSON API contract is the source of truth at
 [`docs/api-contract.md`](docs/api-contract.md).
-
-## Security notes
-
-- Serve the web UI over HTTPS (`web.tls = true`) or behind a trusted reverse
-  proxy; bind it to a private address and/or set `web.allow_networks`.
-- A self-signed certificate is generated under `data_dir` if none is configured;
-  provide your own for production.
-- DoH on the management port shares the management allow-list — use a dedicated
-  `doh_listen` for public DoH.
-- The DynDNS `/nic/update` endpoint is intentionally exempt from the management
-  allow-list (clients have dynamic IPs); its per-token HTTP Basic credential is
-  the security boundary.
 
 ## Roadmap
 
-- GeoDNS / geo-aware answers and load balancing (round-robin, weighted).
-- ASN-based filtering and blocking (MaxMind GeoLite2).
-- Native packages (deb/rpm) and a container image.
+GeoDNS / geo-aware answers and load balancing · ASN-based filtering (MaxMind
+GeoLite2) · native packages and a container image.
 
 ## Contributing
 
-Issues and pull requests are welcome. Please run `cargo fmt`, `cargo clippy`,
-and `cargo test` before submitting. The JSON API is contract-first — update
+PRs welcome. Run `cargo fmt`, `cargo clippy`, and `cargo test` first, and update
 `docs/api-contract.md` alongside any API change.
 
 ## License
 
-Licensed under either of [Apache License 2.0](LICENSE-APACHE) or
-[MIT license](LICENSE-MIT) at your option.
+Licensed under either [Apache-2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT) at your
+option.
