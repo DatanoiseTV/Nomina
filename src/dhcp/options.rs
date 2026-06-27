@@ -113,8 +113,24 @@ static V4_CATALOG: &[OptionDef] = &[
         kind: U32,
     },
     OptionDef {
+        code: 9,
+        name: "LPR Server",
+        kind: IpList,
+    },
+    OptionDef {
+        code: 40,
+        name: "NIS Domain",
+        kind: Text,
+    },
+    OptionDef {
+        code: 41,
+        name: "NIS Servers",
+        kind: IpList,
+    },
+    // --- PXE / network boot ---
+    OptionDef {
         code: 66,
-        name: "TFTP Server Name",
+        name: "TFTP Server Name (next-server)",
         kind: Text,
     },
     OptionDef {
@@ -122,6 +138,52 @@ static V4_CATALOG: &[OptionDef] = &[
         name: "Bootfile Name",
         kind: Text,
     },
+    OptionDef {
+        code: 43,
+        name: "Vendor-Specific Information (PXE)",
+        kind: Hex,
+    },
+    OptionDef {
+        code: 60,
+        name: "Vendor Class Identifier (e.g. PXEClient)",
+        kind: Text,
+    },
+    OptionDef {
+        code: 93,
+        name: "Client System Architecture",
+        kind: U16,
+    },
+    OptionDef {
+        code: 94,
+        name: "Client Network Interface",
+        kind: Hex,
+    },
+    OptionDef {
+        code: 97,
+        name: "Client Machine Identifier (UUID)",
+        kind: Hex,
+    },
+    OptionDef {
+        code: 150,
+        name: "TFTP Server Address",
+        kind: IpList,
+    },
+    OptionDef {
+        code: 209,
+        name: "PXE Configuration File",
+        kind: Text,
+    },
+    OptionDef {
+        code: 210,
+        name: "PXE Path Prefix",
+        kind: Text,
+    },
+    OptionDef {
+        code: 211,
+        name: "PXE Reboot Time",
+        kind: U32,
+    },
+    // --- other common options ---
     OptionDef {
         code: 119,
         name: "Domain Search",
@@ -131,6 +193,16 @@ static V4_CATALOG: &[OptionDef] = &[
         code: 121,
         name: "Classless Static Route",
         kind: Hex,
+    },
+    OptionDef {
+        code: 249,
+        name: "Microsoft Classless Static Route",
+        kind: Hex,
+    },
+    OptionDef {
+        code: 252,
+        name: "WPAD Proxy Auto-Config",
+        kind: Text,
     },
 ];
 

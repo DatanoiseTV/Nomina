@@ -16,6 +16,10 @@ Initial public release. A single self-contained binary.
   DISCOVER/REQUEST/RELEASE/DECLINE/INFORM and DHCPv6 SOLICIT/REQUEST/RENEW are
   served on UDP 67/547 (off unless `[dhcp]` is configured). Managed from a web UI
   (scopes, reservations, live leases, option editor) and `/api/dhcp/*`.
+  **PXE / network boot**: catalog includes the boot options (43/60/66/67/93/94/
+  97/150/209/210/211) and options 67/66 are mirrored into the BOOTP `file` /
+  `siaddr` fields so PXE/iPXE clients boot. A `scripts/dhcp_probe.py` helper and
+  `docs/dhcp-testing.md` cover local testing.
 - **GeoDNS, load balancing & ASN filtering** — views can now match clients by
   country/continent/ASN (geo-targeted answers) using optional MaxMind GeoLite2
   databases (`[geo]` config); `load_balance` (round-robin/random) spreads

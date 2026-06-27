@@ -834,6 +834,29 @@ pub fn build_v4_reply(
             Err(e) => tracing::debug!("DHCPv4 option {} skipped: {e}", opt.code),
         }
     }
+
+    // PXE / BOOTP bridging: many network-boot clients read the legacy BOOTP
+    // header fields (`file` = bootfile, `siaddr` = next-server) rather than the
+    // equivalent DHCP options. Mirror option 67 into `file`, and option 66 into
+    // `siaddr` when it is given as a literal IPv4 address.
+    if msg_type != Dhcp4MessageType::Nak {
+        for opt in merged_opts {
+            match opt.code {
+                67 => {
+                    let bytes = opt.value.as_bytes();
+                    let n = bytes.len().min(reply.file.len());
+                    reply.file[..n].copy_from_slice(&bytes[..n]);
+                }
+                66 => {
+                    if let Ok(ip) = opt.value.trim().parse::<Ipv4Addr>() {
+                        reply.siaddr = ip;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     reply.build()
 }
 
@@ -955,6 +978,26 @@ mod tests {
         assert_eq!(p.option(3), Some([192, 168, 1, 1].as_slice()));
         // chaddr echoed.
         assert_eq!(&p.chaddr[..6], &[0xaa, 0xbb, 0xcc, 0x00, 0x00, 0x01]);
+    }
+
+    #[test]
+    fn pxe_options_bridge_to_bootp_fields() {
+        let s = scope_v4("192.168.1.0/24", Some("192.168.1.1"));
+        let merged = vec![
+            opt(66, "192.168.1.2", DhcpOptionKind::Text), // next-server (literal IP)
+            opt(67, "pxelinux.0", DhcpOptionKind::Text),  // bootfile
+            opt(60, "PXEClient", DhcpOptionKind::Text),
+        ];
+        let yi = Ipv4Addr::new(192, 168, 1, 150);
+        let bytes = build_v4_reply(&discover(), &s, &merged, yi, Dhcp4MessageType::Ack);
+        let p = Dhcp4Message::parse(&bytes).unwrap();
+        // Option 67 mirrored into the BOOTP `file` field for PXE clients.
+        assert!(p.file.starts_with(b"pxelinux.0"));
+        // Option 66 (literal IP) mirrored into `siaddr` (next-server).
+        assert_eq!(p.siaddr, Ipv4Addr::new(192, 168, 1, 2));
+        // The options themselves are still present.
+        assert_eq!(p.option(67), Some(b"pxelinux.0".as_slice()));
+        assert_eq!(p.option(60), Some(b"PXEClient".as_slice()));
     }
 
     #[test]
