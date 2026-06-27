@@ -82,6 +82,8 @@ Rolling query statistics since start.
   "servfail": 4,
   "blocked": 540,
   "dangerous": 7,
+  "dnssec_failures": 3,
+  "dnssec_validate": true,
   "by_qtype": { "A": 6000, "AAAA": 3000, "PTR": 400 },
   "qps_10s": 4.2,
   "qps_1m": 3.8,
@@ -100,7 +102,10 @@ blocked | rewritten | dangerous`. Aggregate counters, `qps_*`, `latency`, `cache
 and `series_per_sec` are always present (non-identifying). `latency` is end-to-end
 resolution time in milliseconds over a bounded recent window. `cache` reflects the
 edge answer-cache that fronts the upstream resolver (`hit_rate` = hits/(hits+misses)).
-`dangerous` counts lookups blocked as homograph/lookalike phishing. `recent`,
+`dangerous` counts lookups blocked as homograph/lookalike phishing.
+`dnssec_validate` reflects the `dnssec_validate_upstream` setting; `dnssec_failures`
+counts upstream answers rejected by DNSSEC validation (the SERVFAILs seen while
+validation is enabled — a validating resolver fails closed on bogus data). `recent`,
 `top_domains`, and `top_blocked` are only populated when `query_log` is `anonymized`
 or `full`.
 

@@ -121,6 +121,10 @@ impl AppState {
         self.settings.read().query_log
     }
 
+    pub fn dnssec_validate_upstream(&self) -> bool {
+        self.settings.read().dnssec_validate_upstream
+    }
+
     pub fn homograph_mode(&self) -> crate::models::HomographMode {
         self.settings.read().homograph_protection
     }

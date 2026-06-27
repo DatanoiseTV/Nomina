@@ -7,6 +7,11 @@ All notable changes to PicoNS are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Upstream DNSSEC validation** — the `dnssec_validate_upstream` setting is now
+  wired to the resolver (forward and recursive modes) using the built-in IANA
+  root trust anchor; bogus answers are rejected (SERVFAIL). The dashboard shows a
+  DNSSEC-failures counter when validation is enabled, exposed in `/api/stats`
+  (`dnssec_failures`, `dnssec_validate`) and as a Prometheus counter.
 - **Full record-type support** — expanded from 9 to 20 record types: added ANAME,
   CERT, CSYNC, HINFO, HTTPS, NAPTR, OPENPGPKEY, SMIMEA, SSHFP, SVCB, and TLSA.
   The record editor now renders **structured per-type fields** (MX preference,

@@ -118,6 +118,7 @@ pub async fn stats(State(state): State<SharedState>, _auth: Authed) -> Response 
     };
     if let Some(obj) = snap.as_object_mut() {
         obj.insert("query_log".into(), json!(state.query_log()));
+        obj.insert("dnssec_validate".into(), json!(state.dnssec_validate_upstream()));
         obj.insert(
             "cache".into(),
             json!({ "hits": hits, "misses": misses, "size": size, "hit_rate": hit_rate }),

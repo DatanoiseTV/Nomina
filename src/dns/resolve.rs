@@ -223,6 +223,9 @@ async fn resolve_external(
     // global resolver (and works even in authoritative-only mode).
     if let Some(up) = state.conditional().match_for(&key) {
         let r = up.resolve(qname, qtype).await;
+        if r.rcode == ResponseCode::ServFail && state.dnssec_validate_upstream() {
+            state.stats.record_dnssec_failure();
+        }
         let stat = match r.rcode {
             ResponseCode::NXDomain => QueryOutcome::NxDomain,
             ResponseCode::ServFail => QueryOutcome::ServFail,
@@ -258,6 +261,11 @@ async fn resolve_external(
                 );
             }
             let r = up.resolve(qname, qtype).await;
+            // A SERVFAIL while validation is enabled is, in practice, the
+            // resolver rejecting a bogus answer (validation fails closed).
+            if r.rcode == ResponseCode::ServFail && state.dnssec_validate_upstream() {
+                state.stats.record_dnssec_failure();
+            }
             cache.put(qname, qtype, &r.answers, &r.authority, r.rcode, now);
             let stat = match r.rcode {
                 ResponseCode::NXDomain => QueryOutcome::NxDomain,

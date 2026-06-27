@@ -77,6 +77,7 @@ struct Counters {
     servfail: AtomicU64,
     blocked: AtomicU64,
     dangerous: AtomicU64,
+    dnssec_failures: AtomicU64,
 }
 
 /// Per-second ring of query counts for the rate chart.
@@ -272,6 +273,12 @@ impl Stats {
         Some(entry)
     }
 
+    /// Record an upstream answer rejected by DNSSEC validation (counted while
+    /// `dnssec_validate_upstream` is enabled).
+    pub fn record_dnssec_failure(&self) {
+        self.counters.dnssec_failures.fetch_add(1, Ordering::Relaxed);
+    }
+
     /// Record a query's end-to-end resolution latency.
     pub fn record_latency(&self, d: std::time::Duration) {
         let us = d.as_micros().min(u64::MAX as u128) as u64;
@@ -335,6 +342,7 @@ impl Stats {
             "servfail": self.counters.servfail.load(Ordering::Relaxed),
             "blocked": self.counters.blocked.load(Ordering::Relaxed),
             "dangerous": self.counters.dangerous.load(Ordering::Relaxed),
+            "dnssec_failures": self.counters.dnssec_failures.load(Ordering::Relaxed),
             "by_qtype": by_qtype,
             "qps_10s": (qps_10s * 100.0).round() / 100.0,
             "qps_1m": (qps_1m * 100.0).round() / 100.0,
@@ -365,6 +373,7 @@ impl Stats {
         };
 
         counter(&mut out, "picons_queries_total", "Total DNS queries handled.", c.total.load(Ordering::Relaxed));
+        counter(&mut out, "picons_dnssec_validation_failures_total", "Upstream answers rejected by DNSSEC validation.", c.dnssec_failures.load(Ordering::Relaxed));
 
         out.push_str("# HELP picons_queries_by_outcome Queries by outcome.\n# TYPE picons_queries_by_outcome counter\n");
         for (label, val) in [

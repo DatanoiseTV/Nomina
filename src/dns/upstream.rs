@@ -12,7 +12,7 @@ use hickory_resolver::TokioResolver;
 use hickory_resolver::config::{ConnectionConfig, NameServerConfig, ResolverConfig, ResolverOpts};
 use hickory_resolver::net::runtime::TokioRuntimeProvider;
 use hickory_resolver::net::{DnsError, NetError};
-use hickory_resolver::recursor::{Recursor, RecursorOptions};
+use hickory_resolver::recursor::{DnssecConfig, DnssecPolicy, Recursor, RecursorOptions};
 
 use crate::models::{ForwardProtocol, Forwarder, ResolutionMode, Settings, ROOT_SERVERS};
 
@@ -47,8 +47,17 @@ impl Upstream {
                     .collect();
                 let mut opts = RecursorOptions::default();
                 opts.response_cache_size = settings.cache_size;
-                let recursor = Recursor::with_options(
+                // Validate from the built-in IANA root trust anchor when enabled;
+                // otherwise stay security-unaware (the default).
+                let policy = if settings.dnssec_validate_upstream {
+                    DnssecPolicy::ValidateWithStaticKey(DnssecConfig::default())
+                } else {
+                    DnssecPolicy::SecurityUnaware
+                };
+                let recursor = Recursor::new(
                     &roots,
+                    policy,
+                    None,
                     opts,
                     TokioRuntimeProvider::default(),
                 )
@@ -185,5 +194,8 @@ pub fn build_forward_resolver(
     opts.positive_max_ttl = Some(Duration::from_secs(settings.cache_max_ttl as u64));
     opts.negative_max_ttl = Some(Duration::from_secs(settings.cache_max_ttl as u64));
     opts.ndots = 0;
+    // DNSSEC validation against the built-in IANA root trust anchor. When on,
+    // bogus answers are rejected and surface to the client as SERVFAIL.
+    opts.validate = settings.dnssec_validate_upstream;
     Ok(builder.build()?)
 }

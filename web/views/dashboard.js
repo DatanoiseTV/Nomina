@@ -206,6 +206,10 @@ function renderStats(host, stats) {
     ["Refused", stats.refused],
     ["SERVFAIL", stats.servfail],
   ];
+  // Only meaningful when upstream DNSSEC validation is enabled.
+  if (stats.dnssec_validate) {
+    counters.push(["DNSSEC failures", stats.dnssec_failures || 0, "danger"]);
+  }
 
   const lat = stats.latency || {};
   const cache = stats.cache || {};
