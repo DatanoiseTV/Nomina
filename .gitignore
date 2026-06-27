@@ -5,3 +5,7 @@
 *.pem
 .DS_Store
 /nomina.local.toml
+
+# Python bytecode
+__pycache__/
+*.pyc
