@@ -4,9 +4,11 @@ All notable changes to Nomina are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.1.0] - 2026-06-27
 
-### Added
+Initial public release. A single self-contained binary.
+
+### Highlights
 - **Upstream DNSSEC validation** — the `dnssec_validate_upstream` setting is now
   wired to the resolver (forward and recursive modes) using the built-in IANA
   root trust anchor; bogus answers are rejected (SERVFAIL). The dashboard shows a
@@ -37,10 +39,6 @@ All notable changes to Nomina are documented here. The format follows
 - **Query-latency stats** (min/avg/median/max, milliseconds) on the dashboard and
   in `/api/stats` (`latency` object).
 - **Dangerous-request counter** (homograph/lookalike blocks) in `/api/stats`.
-
-## [0.1.0] - 2026-06-26
-
-Initial release. A single self-contained binary.
 
 ### DNS
 - Authoritative serving for A, AAAA, CNAME, MX, TXT, NS, SOA, SRV, PTR, CAA.
