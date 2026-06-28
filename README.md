@@ -22,7 +22,7 @@ cargo build --release
   </tr>
   <tr>
     <td width="50%"><img src="docs/screenshots/blocklists.png" alt="Blocklist catalog"><br><sub><b>Blocklists</b> — one-click subscribe from a catalog of ~20 well-known lists.</sub></td>
-    <td width="50%"><img src="docs/screenshots/secondary-axfr.png" alt="Secondary zone via AXFR"><br><sub><b>Secondary zones</b> — replicate a zone from a primary over AXFR.</sub></td>
+    <td width="50%"><img src="docs/screenshots/dhcp.png" alt="DHCP scopes and leases"><br><sub><b>DHCP</b> — IPv4/IPv6 scopes, reservations, leases, and full options.</sub></td>
   </tr>
 </table>
 
