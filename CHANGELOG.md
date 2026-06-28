@@ -4,11 +4,9 @@ All notable changes to Nomina are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [0.1.0] - 2026-06-27
+## [0.2.0] - 2026-06-28
 
-Initial public release. A single self-contained binary.
-
-### Highlights
+### Added
 - **DHCP server (IPv4 + IPv6)** — scopes with address pools, static reservations
   (MAC/DUID), and the full option set plus arbitrary user-defined options
   (typed: ip/ip-list/u8/u16/u32/bool/text/hex). Leases persist with an expiry
@@ -29,6 +27,19 @@ Initial public release. A single self-contained binary.
   listing both `0.0.0.0` and `[::]` works on every platform), per-family query
   counters (IPv4 vs IPv6) on the dashboard and in `/api/stats` + Prometheus, and
   IPv6 CIDRs everywhere views/allow-lists accept networks.
+
+### Changed
+- New neutral **zinc + indigo** UI theme (replacing the blue scheme) that reads
+  cleanly in light and dark, with a persisted light/dark toggle in the top bar.
+- The DHCP option editor is now **name-driven** — pick a named option and get a
+  type-aware value field with a format hint, instead of raw code/kind/value rows
+  ("Custom" still exposes any code).
+
+## [0.1.0] - 2026-06-27
+
+Initial public release. A single self-contained binary.
+
+### Highlights
 - **Upstream DNSSEC validation** — the `dnssec_validate_upstream` setting is now
   wired to the resolver (forward and recursive modes) using the built-in IANA
   root trust anchor; bogus answers are rejected (SERVFAIL). The dashboard shows a
@@ -110,4 +121,5 @@ Initial public release. A single self-contained binary.
   encrypted upstreams. Built with unwinding panics so a malformed packet cannot
   abort the process.
 
+[0.2.0]: https://github.com/DatanoiseTV/Nomina/releases/tag/v0.2.0
 [0.1.0]: https://github.com/DatanoiseTV/Nomina/releases/tag/v0.1.0
