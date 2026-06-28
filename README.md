@@ -59,7 +59,8 @@ one static binary with the database and web UI embedded.
 - **Zone transfers** — serve AXFR/IXFR to allow-listed secondaries, act as a
   secondary (SOA-driven refresh), optional **TSIG**; import/export BIND files.
 - **DynDNS** — DynDNS2 `/nic/update` endpoint for routers/clients (ddclient,
-  FRITZ!Box, UniFi, No-IP), with per-client hostname-scoped tokens.
+  FRITZ!Box, UniFi, No-IP), with per-client hostname-scoped tokens. Client setup:
+  [`docs/dyndns-clients.md`](docs/dyndns-clients.md).
 - **DHCP (IPv4 + IPv6)** — scopes, pools, static reservations (MAC/DUID), the
   full option set plus arbitrary user-defined options, persistent leases, and
   optional lease → DNS auto-registration (A/AAAA + PTR). Off until configured.

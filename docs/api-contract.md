@@ -387,6 +387,8 @@ Response is `text/plain`, one line per hostname:
 (out of scope / no local zone) · `badauth` (401) · `notfqdn` (missing hostname) ·
 `911` (server error). Updates upsert the A/AAAA record in the token's view
 (default: all views) and bump the zone serial so secondaries/AXFR/DNSSEC follow.
+Client setup (FRITZ!Box, OpenWrt, ddclient, …) is documented in
+[`docs/dyndns-clients.md`](dyndns-clients.md).
 
 ### DHCP
 
