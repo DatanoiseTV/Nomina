@@ -314,6 +314,26 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // Periodic blocklist auto-refresh (re-download enabled lists every N hours,
+    // per the runtime setting; 0 = disabled). Re-reads the interval each cycle.
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            loop {
+                let hours = state.blocklist_refresh_hours();
+                if hours == 0 {
+                    tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+                    continue;
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(hours as u64 * 3600)).await;
+                if state.blocklist_refresh_hours() > 0 {
+                    tracing::info!("auto-refreshing blocklists");
+                    web::api::refresh_all_lists(&state).await;
+                }
+            }
+        });
+    }
+
     // Background query-log writer: batch-insert and cap the table size.
     {
         let db = state.db.clone();

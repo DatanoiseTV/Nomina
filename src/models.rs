@@ -363,6 +363,10 @@ pub struct Settings {
     /// CIDR allow-list for the management UI/API. Empty = no restriction.
     #[serde(default)]
     pub web_allow_networks: Vec<String>,
+
+    /// Re-download enabled blocklists every N hours in the background. 0 = off.
+    #[serde(default)]
+    pub blocklist_refresh_hours: u32,
 }
 
 fn default_true() -> bool {
@@ -426,6 +430,7 @@ impl Default for Settings {
             geoip_db: String::new(),
             asn_db: String::new(),
             web_allow_networks: Vec::new(),
+            blocklist_refresh_hours: 0,
         }
     }
 }

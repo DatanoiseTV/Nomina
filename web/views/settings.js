@@ -87,6 +87,7 @@ export async function renderSettings(root) {
 
   // ---- Blocking ----
   const blockingEnabled = h("input", { type: "checkbox", name: "blocking_enabled", checked: !!settings.blocking_enabled });
+  const blocklistRefresh = h("input", { type: "number", min: 0, value: settings.blocklist_refresh_hours ?? 0 });
   const blockMode = h("select", { name: "block_mode" },
     BLOCK_MODES.map((m) => h("option", { value: m.id, selected: settings.block_mode === m.id }, m.label)));
 
@@ -187,9 +188,15 @@ export async function renderSettings(root) {
           h("label.switch", [blockingEnabled, h("span.track"), h("span", "Enable blocklist filtering")]),
           h("div.hint", "Manual allow/deny rules and rewrites still apply when this is off."),
         ]),
-        h("div.field", { style: "max-width:320px" }, [
-          h("label", "Block mode"), blockMode,
-          h("div.hint", "How blocked names are answered."),
+        h("div.form-row", [
+          h("div.field", { style: "max-width:320px" }, [
+            h("label", "Block mode"), blockMode,
+            h("div.hint", "How blocked names are answered."),
+          ]),
+          h("div.field", { style: "max-width:220px" }, [
+            h("label", "Auto-refresh lists (hours)"), blocklistRefresh,
+            h("div.hint", "Re-download enabled blocklists on this interval. 0 = off."),
+          ]),
         ]),
       ]),
     ]),
@@ -342,6 +349,17 @@ export async function renderSettings(root) {
       ]),
     ]),
 
+    // Backup
+    h("div.card.section", [
+      h("div.card-head", [h("h2", "Backup")]),
+      h("div.card-pad", [
+        h("a.btn.btn-sm", { href: "/api/backup", download: "nomina-backup.db" },
+          [icon("download", 16), "Download database backup"]),
+        h("div.hint", { style: "margin-top:8px" },
+          "A consistent SQLite snapshot of zones, records, leases, rules, and settings. Restore by replacing the database file while the server is stopped."),
+      ]),
+    ]),
+
     h("div", { style: "display:flex;justify-content:flex-end" }, save),
   ]);
 
@@ -399,6 +417,7 @@ export async function renderSettings(root) {
       resolution_mode: mode,
       block_mode: blockMode.value,
       blocking_enabled: blockingEnabled.checked,
+      blocklist_refresh_hours: Number(blocklistRefresh.value) || 0,
       query_log: queryLog,
       allow_axfr_from: allowAxfr,
       cache_size: Number(cacheSize.value),

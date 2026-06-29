@@ -313,6 +313,39 @@ pub async fn list_interfaces(_auth: Authed) -> Response {
     ok_json(json!({ "interfaces": list }))
 }
 
+/// Download a consistent snapshot of the database (zones, leases, settings, …)
+/// as a SQLite file, via `VACUUM INTO` to a temp file in the data directory.
+pub async fn backup_db(State(state): State<SharedState>, _auth: Authed) -> ApiResult<Response> {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp = state.config.data_dir.join(format!(".backup-{nonce}.db"));
+    let _ = tokio::fs::remove_file(&tmp).await; // VACUUM INTO needs absence
+    let tmp_path = tmp.to_string_lossy().to_string();
+    state
+        .db
+        .run(move |c| Db::backup_to(c, &tmp_path))
+        .await
+        .map_err(|e| AppError::internal(format!("backup failed: {e}")))?;
+    let bytes = tokio::fs::read(&tmp)
+        .await
+        .map_err(|e| AppError::internal(format!("reading backup: {e}")))?;
+    let _ = tokio::fs::remove_file(&tmp).await;
+    Ok((
+        StatusCode::OK,
+        [
+            (axum::http::header::CONTENT_TYPE, "application/octet-stream"),
+            (
+                axum::http::header::CONTENT_DISPOSITION,
+                "attachment; filename=\"nomina-backup.db\"",
+            ),
+        ],
+        bytes,
+    )
+        .into_response())
+}
+
 /// Clear retained per-query detail (recent queries + top domains).
 pub async fn clear_stats(State(state): State<SharedState>, _auth: Authed) -> Response {
     state.stats.clear_log();
@@ -1313,6 +1346,7 @@ pub struct SettingsUpdate {
     geoip_db: Option<String>,
     asn_db: Option<String>,
     web_allow_networks: Option<Vec<String>>,
+    blocklist_refresh_hours: Option<u32>,
 }
 
 pub async fn get_settings(State(state): State<SharedState>, _auth: Authed) -> ApiResult<Response> {
@@ -1486,6 +1520,9 @@ pub async fn put_settings(
             })?;
         }
         settings.web_allow_networks = v;
+    }
+    if let Some(v) = req.blocklist_refresh_hours {
+        settings.blocklist_refresh_hours = v;
     }
 
     let to_store = settings.clone();
@@ -1767,15 +1804,23 @@ pub async fn refresh_all_blocklists(
     State(state): State<SharedState>,
     _auth: Authed,
 ) -> ApiResult<Response> {
-    let lists = state.db.run(Db::list_blocklists).await?;
-    for l in &lists {
-        if l.enabled {
-            refresh_one(&state, l.id).await;
-        }
-    }
-    state.reload_filter()?;
+    refresh_all_lists(&state).await;
     let lists = state.db.run(Db::list_blocklists).await?;
     Ok(ok_json(json!({ "blocklists": lists })))
+}
+
+/// Re-download every enabled blocklist and reload the filter. Shared by the
+/// manual endpoint and the periodic auto-refresh task.
+pub(crate) async fn refresh_all_lists(state: &SharedState) {
+    let lists = state.db.run(Db::list_blocklists).await.unwrap_or_default();
+    for l in &lists {
+        if l.enabled {
+            refresh_one(state, l.id).await;
+        }
+    }
+    if let Err(e) = state.reload_filter() {
+        tracing::error!("reloading filter after blocklist refresh: {e}");
+    }
 }
 
 /// Fetch and parse one blocklist, replacing its cached entries.

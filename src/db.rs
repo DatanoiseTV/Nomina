@@ -1189,6 +1189,14 @@ impl Db {
             .map(|_| ())
     }
 
+    /// Write a consistent snapshot of the database to `path` (SQLite
+    /// `VACUUM INTO`). The destination must not already exist.
+    pub fn backup_to(conn: &mut SqliteConnection, path: &str) -> QueryResult<()> {
+        use diesel::connection::SimpleConnection;
+        let escaped = path.replace('\'', "''");
+        conn.batch_execute(&format!("VACUUM INTO '{escaped}'"))
+    }
+
     // ----- query log -------------------------------------------------------
 
     /// Batch-insert query-log entries in one transaction.

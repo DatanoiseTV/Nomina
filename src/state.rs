@@ -192,6 +192,10 @@ impl AppState {
         self.settings.read().mdns_publish_public
     }
 
+    pub fn blocklist_refresh_hours(&self) -> u32 {
+        self.settings.read().blocklist_refresh_hours
+    }
+
     /// Next round-robin rotation offset.
     pub fn next_rotation(&self) -> u64 {
         self.rr_counter.fetch_add(1, Ordering::Relaxed)

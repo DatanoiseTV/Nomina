@@ -53,6 +53,7 @@ pub fn router(state: SharedState) -> Router {
         .route("/api/map", get(api::map_points))
         .route("/api/mdns", get(api::mdns_hosts))
         .route("/api/interfaces", get(api::list_interfaces))
+        .route("/api/backup", get(api::backup_db))
         .route(
             "/api/queries",
             get(api::query_log).delete(api::clear_query_log),
