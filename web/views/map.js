@@ -123,14 +123,24 @@ export async function renderMap(root, { registerCleanup }) {
     // Marker scale is shared across all layers so sizes are comparable.
     const all = [...(data.points || []), ...(data.blocked || []), ...(data.blocked_clients || [])];
     const maxCount = Math.max(1, ...all.map((p) => p.count));
+    const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+    const hostsHtml = (hosts) => {
+      if (!hosts || !hosts.length) return "";
+      const rows = hosts.map((hst) =>
+        `<div class="popup-host"><span class="mono">${esc(hst.ip)}</span>` +
+        (hst.cidr ? ` <span class="popup-cidr mono">${esc(hst.cidr)}</span>` : "") +
+        ` <span class="popup-n">×${hst.count}</span></div>`).join("");
+      return `<div class="popup-hosts">${rows}</div>`;
+    };
     const layer = (pts, color, label) => {
       const g = L.layerGroup();
       for (const p of pts || []) {
         const radius = 5 + 16 * Math.sqrt(p.count / maxCount);
+        const head = `<b>${label}</b><br>${esc(p.city || "Unknown")}${p.country ? ", " + esc(p.country) : ""} · ${p.count} hit(s)`;
         L.circleMarker([p.lat, p.lon], {
           radius, color, weight: 1, fillColor: color, fillOpacity: 0.45,
         })
-          .bindPopup(`<b>${label}</b><br>${p.city || "Unknown"}${p.country ? ", " + p.country : ""}<br>${p.count} hit(s)`)
+          .bindPopup(head + hostsHtml(p.hosts), { maxHeight: 240, minWidth: 220 })
           .addTo(g);
       }
       return g;

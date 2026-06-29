@@ -7,6 +7,9 @@ All notable changes to Nomina are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Click a map node to see its hosts/CIDRs** — each marker popup now lists the
+  IP addresses behind that location cluster, each with its network (CIDR, from
+  the ASN/GeoIP database) and hit count (top 30 by hits).
 - **"Your data has travelled ~X km" counter** — a live counter on the Map adds up
   the great-circle distance from this server to every resolved destination
   (weighted by hits) and animates as queries flow. The server's own location is

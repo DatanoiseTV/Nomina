@@ -110,4 +110,20 @@ impl GeoDb {
         }
         g
     }
+
+    /// The most specific network (CIDR) containing `ip`, as a string (e.g.
+    /// `1.1.1.0/24`). Prefers the ASN database's block (the ISP allocation);
+    /// falls back to the City database. `None` if neither has the IP.
+    pub fn network(&self, ip: IpAddr) -> Option<String> {
+        for r in [self.asn.as_ref(), self.geoip.as_ref()].into_iter().flatten() {
+            if let Ok(res) = r.lookup(ip) {
+                if res.has_data() {
+                    if let Ok(net) = res.network() {
+                        return Some(net.to_string());
+                    }
+                }
+            }
+        }
+        None
+    }
 }

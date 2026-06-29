@@ -148,23 +148,12 @@ pub async fn map_points(State(state): State<SharedState>, _auth: Authed) -> Resp
         return ok_json(json!({ "geoip": false, "asn": false, "points": [], "asns": [] }));
     }
     use std::collections::HashMap;
-    // Aggregate by rounded lat/lon so nearby cities cluster into one marker.
-    let mut agg: HashMap<(i64, i64), (f64, f64, String, String, u64)> = HashMap::new();
-    // Aggregate resolved-IP hits by ASN.
+    let resolved = state.stats.resolved_ips();
+
+    // Resolved-IP hits aggregated by ASN (for the Top ASNs breakdown).
     let mut asn_agg: HashMap<u32, (String, u64)> = HashMap::new();
-    for (ip, count) in state.stats.resolved_ips() {
-        let g = geo.lookup(ip);
-        if let (Some(lat), Some(lon)) = (g.lat, g.lon) {
-            let key = ((lat * 20.0).round() as i64, (lon * 20.0).round() as i64);
-            let e = agg.entry(key).or_insert((
-                lat,
-                lon,
-                g.city.clone().unwrap_or_default(),
-                g.country.clone().unwrap_or_default(),
-                0,
-            ));
-            e.4 += count;
-        }
+    for (ip, count) in &resolved {
+        let g = geo.lookup(*ip);
         if let Some(asn) = g.asn {
             let e = asn_agg
                 .entry(asn)
@@ -172,12 +161,6 @@ pub async fn map_points(State(state): State<SharedState>, _auth: Authed) -> Resp
             e.1 += count;
         }
     }
-    let points: Vec<_> = agg
-        .values()
-        .map(|(lat, lon, city, country, count)| {
-            json!({ "lat": lat, "lon": lon, "city": city, "country": country, "count": count })
-        })
-        .collect();
     let mut asns: Vec<_> = asn_agg
         .into_iter()
         .map(|(asn, (org, count))| json!({ "asn": asn, "org": org, "count": count }))
@@ -185,31 +168,47 @@ pub async fn map_points(State(state): State<SharedState>, _auth: Authed) -> Resp
     asns.sort_by(|a, b| b["count"].as_u64().cmp(&a["count"].as_u64()));
     asns.truncate(20);
 
-    // Geolocate a list of (ip, count) into clustered points (same scheme as above).
-    let geo_points = |ips: Vec<(std::net::IpAddr, u64)>| -> Vec<Value> {
-        let mut m: HashMap<(i64, i64), (f64, f64, String, String, u64)> = HashMap::new();
+    // Geolocate (ip, count) pairs into points clustered by rounded lat/lon. Each
+    // point keeps the contributing hosts (top 30, with their CIDR) so the UI can
+    // list them when a marker is clicked.
+    let geo_points = |ips: &[(std::net::IpAddr, u64)]| -> Vec<Value> {
+        type Bucket = (f64, f64, String, String, u64, HashMap<std::net::IpAddr, u64>);
+        let mut m: HashMap<(i64, i64), Bucket> = HashMap::new();
         for (ip, count) in ips {
-            let g = geo.lookup(ip);
+            let g = geo.lookup(*ip);
             let (Some(lat), Some(lon)) = (g.lat, g.lon) else { continue };
             let key = ((lat * 20.0).round() as i64, (lon * 20.0).round() as i64);
-            let e = m.entry(key).or_insert((
-                lat,
-                lon,
-                g.city.clone().unwrap_or_default(),
-                g.country.clone().unwrap_or_default(),
-                0,
-            ));
+            let e = m.entry(key).or_insert_with(|| {
+                (
+                    lat,
+                    lon,
+                    g.city.clone().unwrap_or_default(),
+                    g.country.clone().unwrap_or_default(),
+                    0,
+                    HashMap::new(),
+                )
+            });
             e.4 += count;
+            *e.5.entry(*ip).or_insert(0) += count;
         }
         m.values()
-            .map(|(lat, lon, city, country, count)| {
-                json!({ "lat": lat, "lon": lon, "city": city, "country": country, "count": count })
+            .map(|(lat, lon, city, country, count, ip_counts)| {
+                let mut hosts: Vec<(&std::net::IpAddr, &u64)> = ip_counts.iter().collect();
+                hosts.sort_by(|a, b| b.1.cmp(a.1));
+                hosts.truncate(30);
+                let hosts: Vec<Value> = hosts
+                    .into_iter()
+                    .map(|(ip, c)| json!({ "ip": ip.to_string(), "cidr": geo.network(*ip), "count": c }))
+                    .collect();
+                json!({ "lat": lat, "lon": lon, "city": city, "country": country, "count": count, "hosts": hosts })
             })
             .collect()
     };
+    let points = geo_points(&resolved);
     let blocked_dest = state.stats.blocked_dest_ips();
-    let blocked = geo_points(state.stats.blocked_dest_ips());
-    let blocked_clients = geo_points(state.stats.blocked_client_ips());
+    let blocked = geo_points(&blocked_dest);
+    let blocked_client_ips = state.stats.blocked_client_ips();
+    let blocked_clients = geo_points(&blocked_client_ips);
 
     // Top ASNs / ISPs the blocked destinations belong to.
     let asn_breakdown = |ips: Vec<(std::net::IpAddr, u64)>| -> Vec<Value> {
