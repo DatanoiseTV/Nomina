@@ -67,6 +67,20 @@ pub async fn resolve_query(
         }
     }
 
+    // mDNS-discovered LAN hosts published under the configured zone.
+    if let Some(answers) = mdns_answer(state, qname, qtype) {
+        let out = ResolveOutput {
+            answers,
+            authority: vec![],
+            rcode: ResponseCode::NoError,
+            authoritative: true,
+            recursion_available,
+        };
+        record_stat(state, client, None, qname, qtype, QueryOutcome::Authoritative, &out);
+        state.stats.record_latency(started.elapsed());
+        return out;
+    }
+
     // Apex DNSKEY is synthesized from the zone's signing key, not stored.
     if dnssec_ok && qtype == RecordType::DNSKEY {
         if let Some(signer) = store.signer_for(qname) {
@@ -216,6 +230,35 @@ fn apply_load_balance(answers: &mut [Record], mode: LoadBalance, rotation: impl 
             answers[i] = group[slot].clone();
         }
     }
+}
+
+/// Answer `<host>.<mdns-zone>` A/AAAA queries from the mDNS registry, when mDNS
+/// discovery is enabled. Returns `None` if disabled, out of zone, or unknown.
+fn mdns_answer(state: &AppState, qname: &Name, qtype: RecordType) -> Option<Vec<Record>> {
+    let cfg = &state.config.mdns;
+    if !cfg.enabled || !matches!(qtype, RecordType::A | RecordType::AAAA | RecordType::ANY) {
+        return None;
+    }
+    let zone = cfg.zone.as_deref()?.trim_end_matches('.').to_ascii_lowercase();
+    if zone.is_empty() {
+        return None;
+    }
+    let name = qname.to_string().trim_end_matches('.').to_ascii_lowercase();
+    let label = name.strip_suffix(&format!(".{zone}"))?;
+    if label.is_empty() || label.contains('.') {
+        return None; // only flat hosts directly under the zone
+    }
+    let ttl = cfg.ttl.unwrap_or(120);
+    let answers: Vec<Record> = state
+        .mdns()
+        .lookup(label, qtype)
+        .into_iter()
+        .map(|ip| match ip {
+            IpAddr::V4(v4) => Record::from_rdata(qname.clone(), ttl, RData::A(A(v4))),
+            IpAddr::V6(v6) => Record::from_rdata(qname.clone(), ttl, RData::AAAA(AAAA(v6))),
+        })
+        .collect();
+    if answers.is_empty() { None } else { Some(answers) }
 }
 
 fn same_name(a: &Name, b: &Name) -> bool {

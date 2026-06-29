@@ -11,6 +11,7 @@ use crate::config::Config;
 use crate::db::Db;
 use crate::dns::cache::DnsCache;
 use crate::dns::conditional::ConditionalSet;
+use crate::dns::mdns::MdnsRegistry;
 use crate::dns::upstream::Upstream;
 use crate::filter::FilterSet;
 use crate::geo::GeoDb;
@@ -38,6 +39,7 @@ pub struct AppState {
     cache: RwLock<Arc<DnsCache>>,
     settings: RwLock<Settings>,
     geo: Arc<GeoDb>,
+    mdns: Arc<MdnsRegistry>,
     /// Monotonic counter driving round-robin answer rotation.
     rr_counter: AtomicU64,
     throttle: Mutex<LoginThrottle>,
@@ -74,6 +76,7 @@ impl AppState {
                 settings.cache_max_ttl,
             ))),
             geo,
+            mdns: Arc::new(MdnsRegistry::default()),
             settings: RwLock::new(settings),
             rr_counter: AtomicU64::new(0),
             throttle: Mutex::new(LoginThrottle::default()),
@@ -139,6 +142,11 @@ impl AppState {
     /// The GeoIP/ASN databases (may be empty if none configured).
     pub fn geo(&self) -> Arc<GeoDb> {
         self.geo.clone()
+    }
+
+    /// The mDNS discovery registry.
+    pub fn mdns(&self) -> Arc<MdnsRegistry> {
+        self.mdns.clone()
     }
 
     pub fn load_balance(&self) -> crate::models::LoadBalance {

@@ -7,6 +7,11 @@ All notable changes to Nomina are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **mDNS discovery & republishing** — enable `[mdns]` to passively learn the
+  `*.local` hostnames Bonjour/Avahi announce on the LAN and republish them as
+  low-TTL records under a zone you choose (e.g. `macbook.local` → `macbook.lan`),
+  so clients that can't speak mDNS still resolve LAN hosts. Listens on UDP 5353,
+  coexists with a system responder, and reports a live host count in `/api/status`.
 - **Per-blocklist hit counts** — each block is attributed to the blocklist that
   supplied the domain; the Blocklists page shows a live "Hits" column so you can
   see which lists actually do the work.

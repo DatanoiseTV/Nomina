@@ -109,6 +109,11 @@ pub async fn status(State(state): State<SharedState>, _auth: Authed) -> ApiResul
             "geoip": state.geo().has_geoip(),
             "asn": state.geo().has_asn(),
         },
+        "mdns": {
+            "enabled": state.config.mdns.enabled,
+            "zone": state.config.mdns.zone,
+            "hosts": state.mdns().count(),
+        },
     })))
 }
 
