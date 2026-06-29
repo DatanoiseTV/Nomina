@@ -826,15 +826,41 @@ dialog::backdrop { background: rgba(10, 14, 22, 0.5); backdrop-filter: blur(3px)
 }
 
 /* ============ Map (Leaflet) ============ */
+/* Map + country breakdown share one viewport-height row so the page fits
+   without scrolling. Map fills its cell; the side list scrolls internally. */
+.map-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 2.4fr) minmax(260px, 1fr);
+  gap: 16px;
+  height: calc(100vh - 170px);
+  min-height: 420px;
+}
+.map-side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.map-side-card {
+  overflow-y: auto;
+  min-height: 0;
+}
 .map-card {
   padding: 0;
   overflow: hidden;
+  height: 100%;
 }
 .map-canvas {
-  /* Fill the viewport below the page header; never collapse on small screens. */
-  height: calc(100vh - 230px);
-  min-height: 460px;
+  height: 100%;
   width: 100%;
+}
+@media (max-width: 820px) {
+  /* Stack on narrow screens; give the map a fixed slice and let the page flow. */
+  .map-layout {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+  .map-canvas { height: 52vh; min-height: 320px; }
+  .map-side-card { overflow-y: visible; }
 }
 .leaflet-container {
   background: var(--bg-sunken);

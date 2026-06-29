@@ -49,11 +49,15 @@ export async function renderMap(root, { registerCleanup }) {
     return;
   }
 
+  // Map (left) and the country breakdown (right) share one viewport-height row,
+  // so the page fits without scrolling; the list scrolls internally if long.
   const mapEl = h("div.map-canvas");
-  root.appendChild(h("div.card.map-card", mapEl));
+  const sideCol = h("div.map-side");
+  root.appendChild(h("div.map-layout", [
+    h("div.card.map-card", mapEl),
+    sideCol,
+  ]));
   const hits = data.points.reduce((a, p) => a + p.count, 0);
-  root.appendChild(h("div.inline-note", { style: "margin-top:8px" },
-    `${data.points.length} location(s) · ${hits} resolved-IP hit(s). Tiles © OpenStreetMap.`));
 
   const map = L.map(mapEl, { worldCopyJump: true }).setView([25, 0], 2);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -81,17 +85,17 @@ export async function renderMap(root, { registerCleanup }) {
   }
   const rows = Object.entries(byCountry).sort((a, b) => b[1] - a[1]).slice(0, 12);
   const max = Math.max(1, ...rows.map((r) => r[1]));
-  root.appendChild(h("div.section", { style: "margin-top:18px" }, [
-    h("h2", { style: "margin-bottom:12px" }, "Top countries"),
-    h("div.card", h("div.card-pad", rows.length
-      ? h("div.qtype-bar", rows.map(([c, n]) =>
-          h("div.row", [
-            h("span.mono", `${flag(c)} ${c}`),
-            h("div.bar", h("span", { style: `width:${Math.round((n / max) * 100)}%` })),
-            h("span.num", String(n)),
-          ])))
-      : h("div.inline-note", "No data yet."))),
-  ]));
+  sideCol.appendChild(h("h2", { style: "margin:0 0 12px" }, "Top countries"));
+  sideCol.appendChild(h("div.card.map-side-card", h("div.card-pad", rows.length
+    ? h("div.qtype-bar", rows.map(([c, n]) =>
+        h("div.row", [
+          h("span.mono", `${flag(c)} ${c}`),
+          h("div.bar", h("span", { style: `width:${Math.round((n / max) * 100)}%` })),
+          h("span.num", String(n)),
+        ])))
+    : h("div.inline-note", "No data yet."))));
+  sideCol.appendChild(h("div.inline-note", { style: "margin-top:8px" },
+    `${data.points.length} location(s) · ${hits} hit(s). Tiles © OpenStreetMap.`));
 }
 
 // ISO-3166 alpha-2 -> regional-indicator flag emoji.
