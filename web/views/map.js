@@ -72,4 +72,30 @@ export async function renderMap(root, { registerCleanup }) {
   // Leaflet needs a size recalc once the element has its final layout.
   setTimeout(() => map.invalidateSize(), 120);
   if (registerCleanup) registerCleanup(() => { try { map.remove(); } catch (_) {} });
+
+  // Top countries breakdown below the map.
+  const byCountry = {};
+  for (const p of data.points) {
+    const c = p.country || "??";
+    byCountry[c] = (byCountry[c] || 0) + p.count;
+  }
+  const rows = Object.entries(byCountry).sort((a, b) => b[1] - a[1]).slice(0, 12);
+  const max = Math.max(1, ...rows.map((r) => r[1]));
+  root.appendChild(h("div.section", { style: "margin-top:18px" }, [
+    h("h2", { style: "margin-bottom:12px" }, "Top countries"),
+    h("div.card", h("div.card-pad", rows.length
+      ? h("div.qtype-bar", rows.map(([c, n]) =>
+          h("div.row", [
+            h("span.mono", `${flag(c)} ${c}`),
+            h("div.bar", h("span", { style: `width:${Math.round((n / max) * 100)}%` })),
+            h("span.num", String(n)),
+          ])))
+      : h("div.inline-note", "No data yet."))),
+  ]));
+}
+
+// ISO-3166 alpha-2 -> regional-indicator flag emoji.
+function flag(cc) {
+  if (!cc || cc.length !== 2 || !/^[A-Za-z]{2}$/.test(cc)) return "🏳";
+  return String.fromCodePoint(...[...cc.toUpperCase()].map((ch) => 0x1f1e6 + ch.charCodeAt(0) - 65));
 }

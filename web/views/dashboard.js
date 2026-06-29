@@ -7,7 +7,7 @@ import {
 } from "../ui.js";
 import { queryActions } from "./query-actions.js";
 
-const POLL_MS = 5000;
+const POLL_MS = 2000;
 
 const OUTCOME_KIND = {
   authoritative: "accent",
@@ -167,30 +167,45 @@ function fmtQps(n) {
   return v.toFixed(v >= 100 ? 0 : 1);
 }
 
-// Inline SVG bar chart for the per-second series. Built as an SVG string (no
-// external resources); fills come from CSS so it follows the theme.
+// Inline SVG area chart for the per-second series: a smooth gradient-filled
+// curve with an accent stroke. Theme-aware via CSS variables; no external deps.
 function sparkline(series) {
   const data = (series || []).map((n) => Math.max(0, Number(n) || 0));
   const W = 600, H = 80;
-  const n = data.length || 1;
+  const n = Math.max(2, data.length);
+  while (data.length < n) data.unshift(0);
   const max = data.reduce((m, v) => Math.max(m, v), 0) || 1;
-  const barW = W / n;
-  const inner = Math.max(barW * 0.72, 0.5);
-  const pad = (barW - inner) / 2;
+  const step = W / (n - 1);
+  const y = (v) => H - 3 - (v / max) * (H - 8);
+  const pts = data.map((v, i) => [i * step, y(v)]);
 
-  const bars = data.map((v, i) => {
-    const bh = (v / max) * (H - 1);
-    const x = i * barW + pad;
-    const y = H - bh;
-    return `<rect class="spark-bar" x="${x.toFixed(2)}" y="${y.toFixed(2)}" ` +
-      `width="${inner.toFixed(2)}" height="${Math.max(bh, 0.5).toFixed(2)}"/>`;
-  }).join("");
-
+  // Smooth the line with a Catmull-Rom -> cubic-bezier conversion.
+  let line = `M ${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] || pts[i];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = pts[i + 2] || p2;
+    const c1x = p1[0] + (p2[0] - p0[0]) / 6;
+    const c1y = p1[1] + (p2[1] - p0[1]) / 6;
+    const c2x = p2[0] - (p3[0] - p1[0]) / 6;
+    const c2y = p2[1] - (p3[1] - p1[1]) / 6;
+    line += ` C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`;
+  }
+  const area = `${line} L ${W} ${H} L 0 ${H} Z`;
   const peak = data.reduce((m, v) => Math.max(m, v), 0);
-  const label = `Queries per second over the last ${n} seconds, peak ${peak}`;
+
   return h("div.sparkline-wrap", {
-    html: `<svg class="sparkline" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" ` +
-      `role="img" aria-label="${label}">${bars}</svg>`,
+    html:
+      `<svg class="sparkline" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" ` +
+      `role="img" aria-label="Queries per second over the last ${n} seconds, peak ${peak}">` +
+      `<defs><linearGradient id="sparkfill" x1="0" y1="0" x2="0" y2="1">` +
+      `<stop offset="0%" stop-color="var(--accent)" stop-opacity="0.35"/>` +
+      `<stop offset="100%" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs>` +
+      `<path d="${area}" fill="url(#sparkfill)"/>` +
+      `<path d="${line}" fill="none" stroke="var(--accent)" stroke-width="2" ` +
+      `vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round"/>` +
+      `</svg>`,
   });
 }
 
