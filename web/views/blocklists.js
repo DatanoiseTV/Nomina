@@ -63,7 +63,7 @@ export async function renderBlocklists(root, { navigate }) {
           h("table.tbl", [
             h("thead", h("tr", [
               h("th", "Name"), h("th", "Format"), h("th", "Status"),
-              h("th", "Entries"), h("th", "Updated"), h("th", ""),
+              h("th", "Entries"), h("th", "Hits"), h("th", "Updated"), h("th", ""),
             ])),
             h("tbody", blocklists.map((bl) => row(bl, reload))),
           ])
@@ -254,6 +254,7 @@ function row(bl, reload) {
     h("td.mono", bl.format),
     h("td", h("label.switch", [toggle, h("span.track")])),
     h("td", fmtInt(bl.entry_count)),
+    h("td", bl.hits ? h("span.badge.badge-warn", fmtInt(bl.hits)) : h("span.inline-note", "0")),
     h("td", bl.last_updated ? fmtTime(bl.last_updated) : h("span.inline-note", "never")),
     h("td.actions", h("div", { style: "display:flex;gap:2px;justify-content:flex-end" }, [refresh, del])),
   ]);

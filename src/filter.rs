@@ -31,11 +31,20 @@ pub enum Decision {
     Rewrite(RewriteTarget),
 }
 
+/// One enabled blocklist's exact-domain set, kept separately so a block can be
+/// attributed back to the list that supplied the domain.
+struct BlockSource {
+    id: i64,
+    domains: HashSet<String>,
+}
+
 #[derive(Default)]
 pub struct FilterSet {
     blocking_enabled: bool,
-    /// Exact domains from downloaded blocklists.
-    blocked: HashSet<String>,
+    /// Per-blocklist exact-domain sets (for matching + hit attribution).
+    blocklists: Vec<BlockSource>,
+    /// Total distinct blocked domains across lists (for the dashboard count).
+    blocked_total: usize,
     /// Manual deny patterns (match domain + subdomains).
     deny_rules: Vec<String>,
     /// Manual allow patterns.
@@ -56,9 +65,20 @@ impl FilterSet {
             ..Default::default()
         };
 
-        for d in Db::enabled_block_domains(conn).unwrap_or_default() {
-            set.blocked.insert(d.to_ascii_lowercase());
+        // Group enabled blocklist domains by their source list.
+        let mut by_list: std::collections::HashMap<i64, HashSet<String>> =
+            std::collections::HashMap::new();
+        let mut all = HashSet::new();
+        for (id, d) in Db::enabled_block_domains_by_list(conn).unwrap_or_default() {
+            let d = d.to_ascii_lowercase();
+            all.insert(d.clone());
+            by_list.entry(id).or_default().insert(d);
         }
+        set.blocked_total = all.len();
+        set.blocklists = by_list
+            .into_iter()
+            .map(|(id, domains)| BlockSource { id, domains })
+            .collect();
 
         for rule in Db::list_block_rules(conn).unwrap_or_default() {
             let d = rule.domain.trim_end_matches('.').to_ascii_lowercase();
@@ -111,7 +131,7 @@ impl FilterSet {
             return Decision::Allow;
         }
         if self.blocking_enabled
-            && (self.blocked.contains(name)
+            && (self.blocklists.iter().any(|b| b.domains.contains(name))
                 || self.deny_rules.iter().any(|p| domain_covers(p, name)))
         {
             return Decision::Block;
@@ -119,8 +139,17 @@ impl FilterSet {
         Decision::Pass
     }
 
+    /// The id of the blocklist that supplies `name`, for per-list hit
+    /// attribution. Returns `None` when the block came from a manual deny rule.
+    pub fn blocklist_hit(&self, name: &str) -> Option<i64> {
+        self.blocklists
+            .iter()
+            .find(|b| b.domains.contains(name))
+            .map(|b| b.id)
+    }
+
     pub fn blocked_count(&self) -> usize {
-        self.blocked.len()
+        self.blocked_total
     }
 
     pub fn rewrite_count(&self) -> usize {

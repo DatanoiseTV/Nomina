@@ -249,7 +249,9 @@ struct SecondaryRaw {
 }
 
 #[derive(QueryableByName)]
-struct DomainRow {
+struct ListDomainRow {
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    blocklist_id: i64,
     #[diesel(sql_type = Text)]
     domain: String,
 }
@@ -1394,16 +1396,19 @@ impl Db {
             .map(|_| ())
     }
 
-    /// All domains from enabled blocklists, for building the in-memory filter.
-    pub fn enabled_block_domains(conn: &mut SqliteConnection) -> QueryResult<Vec<String>> {
+    /// Enabled blocklist domains tagged with their source blocklist id, for
+    /// per-list hit attribution.
+    pub fn enabled_block_domains_by_list(
+        conn: &mut SqliteConnection,
+    ) -> QueryResult<Vec<(i64, String)>> {
         Ok(diesel::sql_query(
-            "SELECT e.domain AS domain FROM blocklist_entries e
+            "SELECT e.blocklist_id AS blocklist_id, e.domain AS domain FROM blocklist_entries e
              JOIN blocklists b ON b.id = e.blocklist_id
              WHERE b.enabled = 1",
         )
-        .load::<DomainRow>(conn)?
+        .load::<ListDomainRow>(conn)?
         .into_iter()
-        .map(|r| r.domain)
+        .map(|r| (r.blocklist_id, r.domain))
         .collect())
     }
 

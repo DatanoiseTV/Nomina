@@ -291,11 +291,16 @@ async fn resolve_external(
 ) -> (ResolveOutput, QueryOutcome) {
     let key = qname.to_string().trim_end_matches('.').to_ascii_lowercase();
 
-    match state.filter().decide(&key) {
+    let filter = state.filter();
+    match filter.decide(&key) {
         Decision::Rewrite(target) => {
             return rewrite_answer(state, qname, qtype, target, recursion_available).await;
         }
         Decision::Block => {
+            // Attribute the block to its source blocklist (if not a deny rule).
+            if let Some(id) = filter.blocklist_hit(&key) {
+                state.stats.record_blocklist_hit(id);
+            }
             return (
                 block_answer(state.block_mode(), qname, qtype, recursion_available),
                 QueryOutcome::Blocked,

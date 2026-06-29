@@ -7,6 +7,9 @@ All notable changes to Nomina are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Per-blocklist hit counts** — each block is attributed to the blocklist that
+  supplied the domain; the Blocklists page shows a live "Hits" column so you can
+  see which lists actually do the work.
 - **Automatic HTTPS (ACME / Let's Encrypt)** — set `tls.acme = true` to obtain and
   renew a real certificate for the web UI via ACME TLS-ALPN-01 (no extra ports,
   no manual cert handling). Configurable domains/contact and a staging toggle;

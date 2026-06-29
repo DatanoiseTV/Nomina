@@ -1261,7 +1261,19 @@ pub async fn list_blocklists(
     _auth: Authed,
 ) -> ApiResult<Response> {
     let lists = state.db.run(Db::list_blocklists).await?;
-    Ok(ok_json(json!({ "blocklists": lists })))
+    let hits = state.stats.blocklist_hits();
+    // Attach the runtime hit count to each list.
+    let with_hits: Vec<Value> = lists
+        .iter()
+        .map(|b| {
+            let mut v = serde_json::to_value(b).unwrap_or_else(|_| json!({}));
+            if let Some(obj) = v.as_object_mut() {
+                obj.insert("hits".into(), json!(hits.get(&b.id).copied().unwrap_or(0)));
+            }
+            v
+        })
+        .collect();
+    Ok(ok_json(json!({ "blocklists": with_hits })))
 }
 
 /// A curated catalog of well-known blocklists the UI can offer one-click.

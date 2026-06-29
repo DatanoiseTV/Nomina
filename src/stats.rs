@@ -150,6 +150,8 @@ pub struct Stats {
     latencies: Mutex<VecDeque<u64>>,
     /// Public resolved (answer) IPs -> count, for the geo map (bounded).
     resolved: Mutex<HashMap<IpAddr, u64>>,
+    /// Blocklist id -> number of blocks attributed to it.
+    blocklist_hits: Mutex<HashMap<i64, u64>>,
     started: Instant,
     started_at: String,
 }
@@ -165,6 +167,7 @@ impl Default for Stats {
             series: Mutex::new(Series::new()),
             latencies: Mutex::new(VecDeque::with_capacity(LATENCY_CAPACITY)),
             resolved: Mutex::new(HashMap::new()),
+            blocklist_hits: Mutex::new(HashMap::new()),
             started: Instant::now(),
             started_at: OffsetDateTime::now_utc()
                 .format(&Rfc3339)
@@ -340,6 +343,16 @@ impl Stats {
     /// Snapshot of resolved IPs and their counts (for `/api/map`).
     pub fn resolved_ips(&self) -> Vec<(IpAddr, u64)> {
         self.resolved.lock().iter().map(|(k, v)| (*k, *v)).collect()
+    }
+
+    /// Attribute a block to the blocklist that supplied the domain.
+    pub fn record_blocklist_hit(&self, id: i64) {
+        *self.blocklist_hits.lock().entry(id).or_insert(0) += 1;
+    }
+
+    /// Per-blocklist hit counts (blocklist id -> hits).
+    pub fn blocklist_hits(&self) -> HashMap<i64, u64> {
+        self.blocklist_hits.lock().clone()
     }
 
     /// Record a query's end-to-end resolution latency.
