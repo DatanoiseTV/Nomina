@@ -405,6 +405,16 @@ async fn main() -> anyhow::Result<()> {
         (None, None, None, None, None)
     };
 
+    // Restore the edge cache persisted at the last shutdown (warm start).
+    let cache_path = config.data_dir.join("dns-cache.json");
+    let restored = state.cache().load(&cache_path);
+    if restored > 0 {
+        tracing::info!(
+            "restored {restored} cached answers from {}",
+            cache_path.display()
+        );
+    }
+
     // ---- Bind all listeners while still privileged ----
     let dns_sockets = dns::server::bind(&config).await?;
 
@@ -577,6 +587,10 @@ async fn main() -> anyhow::Result<()> {
     // Best-effort graceful drain: flush the query-log buffer and checkpoint the
     // database before exit so a SIGTERM (systemd/Docker/k8s) doesn't lose state.
     tracing::info!("draining and shutting down");
+    match state.cache().save(&cache_path) {
+        Ok(n) => tracing::info!("persisted {n} cached answers to {}", cache_path.display()),
+        Err(e) => tracing::warn!("could not persist cache: {e}"),
+    }
     let _ = state.db.with(|c| {
         use diesel::connection::SimpleConnection;
         c.batch_execute("PRAGMA wal_checkpoint(TRUNCATE);").ok();

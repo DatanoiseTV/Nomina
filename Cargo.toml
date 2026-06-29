@@ -19,7 +19,7 @@ data-encoding = "2"
 diesel = { version = "2", features = ["sqlite", "returning_clauses_for_sqlite_3_35"] }
 diesel_migrations = "2"
 futures-util = "0.3"
-hickory-proto = { version = "0.26", features = ["dnssec-ring", "mdns"] }
+hickory-proto = { version = "0.26", features = ["dnssec-ring", "mdns", "serde"] }
 hickory-resolver = { version = "0.26", features = ["tokio", "system-config", "tls-ring", "https-ring", "recursor", "dnssec-ring"] }
 hickory-server = { version = "0.26", features = ["tls-ring", "https-ring", "quic-ring", "h3-ring"] }
 hyper = { version = "1", features = ["server", "http1", "http2"] }

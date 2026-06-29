@@ -7,6 +7,10 @@ All notable changes to Nomina are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Cache persistence (warm restart)** — the edge answer cache is saved to
+  `<data_dir>/dns-cache.json` on graceful shutdown (storing each entry's
+  *remaining* TTL) and restored on startup, so a restart no longer starts with a
+  cold cache. Corrupt/missing files are ignored.
 - **Production deployment** — graceful shutdown on SIGTERM (not just SIGINT) with
   a WAL checkpoint, so systemd/Docker/Kubernetes stop cleanly; a GitHub Actions
   CI pipeline (fmt, clippy, test, release build, cargo audit); a multi-stage
