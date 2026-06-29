@@ -49,8 +49,8 @@ export async function renderMap(root, { registerCleanup }) {
     return;
   }
 
-  const mapEl = h("div", { style: "height:560px" });
-  root.appendChild(h("div.card", { style: "padding:0;overflow:hidden" }, mapEl));
+  const mapEl = h("div.map-canvas");
+  root.appendChild(h("div.card.map-card", mapEl));
   const hits = data.points.reduce((a, p) => a + p.count, 0);
   root.appendChild(h("div.inline-note", { style: "margin-top:8px" },
     `${data.points.length} location(s) · ${hits} resolved-IP hit(s). Tiles © OpenStreetMap.`));

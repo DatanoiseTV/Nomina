@@ -824,3 +824,52 @@ dialog::backdrop { background: rgba(10, 14, 22, 0.5); backdrop-filter: blur(3px)
   .grid-cards { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
   .content { padding: var(--s-4) var(--s-3); }
 }
+
+/* ============ Map (Leaflet) ============ */
+.map-card {
+  padding: 0;
+  overflow: hidden;
+}
+.map-canvas {
+  /* Fill the viewport below the page header; never collapse on small screens. */
+  height: calc(100vh - 230px);
+  min-height: 460px;
+  width: 100%;
+}
+.leaflet-container {
+  background: var(--bg-sunken);
+  font: inherit;
+}
+/* Themed zoom controls + popups + attribution. */
+.leaflet-bar a,
+.leaflet-bar a:hover {
+  background: var(--surface);
+  color: var(--text);
+  border-bottom-color: var(--border);
+}
+.leaflet-bar {
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+.leaflet-control-attribution {
+  background: color-mix(in srgb, var(--surface) 85%, transparent) !important;
+  color: var(--text-muted) !important;
+}
+.leaflet-control-attribution a { color: var(--accent) !important; }
+
+/* Dark theme: tint the (light) OSM tiles into a dark basemap. Markers live in
+   the overlay pane, not the tile pane, so they keep their colour. */
+:root[data-theme="dark"] .leaflet-tile {
+  filter: invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.95) saturate(0.85);
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="system"] .leaflet-tile {
+    filter: invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.95) saturate(0.85);
+  }
+}
