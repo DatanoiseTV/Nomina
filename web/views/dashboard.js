@@ -84,12 +84,6 @@ export async function renderDashboard(root, { registerCleanup }) {
           status.started_at ? `since ${fmtTime(status.started_at)}` : null),
       ]),
 
-      // listeners
-      h("div.card.section", [
-        h("div.card-head", [h("h2", "Listeners")]),
-        h("div.card-pad", listenersView(status.listeners || [])),
-      ]),
-
       // live stats
       statsHost,
       topHost,
@@ -144,7 +138,7 @@ function statCard(label, value, sub) {
   ]);
 }
 
-function listenersView(listeners) {
+export function listenersView(listeners) {
   if (!listeners.length) return h("div.inline-note", "No listeners reported.");
   return h("div.grid.grid-cards",
     listeners.map((l) =>

@@ -7,6 +7,14 @@ All notable changes to Nomina are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **More configuration in the web UI** — Settings now manages the DNS listeners
+  (plain/DoT/DoH/DoQ/DoH3 addresses, DoH path, TCP timeout), TLS (hostname,
+  self-signed, ACME domains/contact/staging, cert/key paths), the GeoIP database
+  paths, and the management allow-list — previously config-file only. These
+  overlay the config file at startup and show the currently-bound listeners; an
+  empty field falls back to the file. Socket/database changes take effect on
+  restart (sockets bind while privileged). The listeners panel moved off the
+  dashboard into Settings.
 - **DHCP per-interface scopes (direct VLANs)** — a scope can be pinned to a
   network interface (e.g. `eth0.20`) in the DHCP editor. Directly-connected,
   non-relayed clients are matched to the scope serving the interface their

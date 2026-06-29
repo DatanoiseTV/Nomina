@@ -1231,6 +1231,24 @@ pub struct SettingsUpdate {
     mdns_zone: Option<String>,
     mdns_ttl: Option<u32>,
     mdns_publish_public: Option<bool>,
+    dns_listen: Option<Vec<String>>,
+    dot_listen: Option<Vec<String>>,
+    doh_listen: Option<Vec<String>>,
+    doq_listen: Option<Vec<String>>,
+    doh3_listen: Option<Vec<String>>,
+    doh_path: Option<String>,
+    tcp_timeout_secs: Option<u32>,
+    tls_hostname: Option<String>,
+    tls_acme: Option<bool>,
+    tls_acme_domains: Option<Vec<String>>,
+    tls_acme_contact: Option<String>,
+    tls_acme_staging: Option<bool>,
+    tls_cert_path: Option<String>,
+    tls_key_path: Option<String>,
+    tls_auto_self_signed: Option<bool>,
+    geoip_db: Option<String>,
+    asn_db: Option<String>,
+    web_allow_networks: Option<Vec<String>>,
 }
 
 pub async fn get_settings(State(state): State<SharedState>, _auth: Authed) -> ApiResult<Response> {
@@ -1323,6 +1341,83 @@ pub async fn put_settings(
     }
     if let Some(v) = req.mdns_publish_public {
         settings.mdns_publish_public = v;
+    }
+
+    // Listeners — validate each entry parses as a socket address.
+    fn check_addrs(field: &str, v: &[String]) -> Result<(), AppError> {
+        for a in v {
+            if a.trim().parse::<std::net::SocketAddr>().is_err() {
+                return Err(validation_field(field, &format!("invalid address: {a}")));
+            }
+        }
+        Ok(())
+    }
+    if let Some(v) = req.dns_listen {
+        check_addrs("dns_listen", &v)?;
+        settings.dns_listen = v;
+    }
+    if let Some(v) = req.dot_listen {
+        check_addrs("dot_listen", &v)?;
+        settings.dot_listen = v;
+    }
+    if let Some(v) = req.doh_listen {
+        check_addrs("doh_listen", &v)?;
+        settings.doh_listen = v;
+    }
+    if let Some(v) = req.doq_listen {
+        check_addrs("doq_listen", &v)?;
+        settings.doq_listen = v;
+    }
+    if let Some(v) = req.doh3_listen {
+        check_addrs("doh3_listen", &v)?;
+        settings.doh3_listen = v;
+    }
+    if let Some(v) = req.doh_path {
+        settings.doh_path = v.trim().to_string();
+    }
+    if let Some(v) = req.tcp_timeout_secs {
+        settings.tcp_timeout_secs = v;
+    }
+    // TLS
+    if let Some(v) = req.tls_hostname {
+        settings.tls_hostname = v.trim().to_string();
+    }
+    if let Some(v) = req.tls_acme {
+        settings.tls_acme = v;
+    }
+    if let Some(v) = req.tls_acme_domains {
+        settings.tls_acme_domains = v.into_iter().map(|d| d.trim().to_string()).filter(|d| !d.is_empty()).collect();
+    }
+    if let Some(v) = req.tls_acme_contact {
+        settings.tls_acme_contact = v.trim().to_string();
+    }
+    if let Some(v) = req.tls_acme_staging {
+        settings.tls_acme_staging = v;
+    }
+    if let Some(v) = req.tls_cert_path {
+        settings.tls_cert_path = v.trim().to_string();
+    }
+    if let Some(v) = req.tls_key_path {
+        settings.tls_key_path = v.trim().to_string();
+    }
+    if let Some(v) = req.tls_auto_self_signed {
+        settings.tls_auto_self_signed = Some(v);
+    }
+    // GeoIP
+    if let Some(v) = req.geoip_db {
+        settings.geoip_db = v.trim().to_string();
+    }
+    if let Some(v) = req.asn_db {
+        settings.asn_db = v.trim().to_string();
+    }
+    // Management allow-list (CIDRs).
+    if let Some(v) = req.web_allow_networks {
+        for cidr in &v {
+            cidr.parse::<ipnet::IpNet>().map_err(|_| {
+                validation_field("web_allow_networks", &format!("invalid CIDR: {cidr}"))
+            })?;
+        }
+        settings.web_allow_networks = v;
     }
 
     let to_store = settings.clone();

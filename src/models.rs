@@ -299,6 +299,70 @@ pub struct Settings {
     /// no business being served under a local name.
     #[serde(default)]
     pub mdns_publish_public: bool,
+
+    // ----- Listeners (DB-managed; merged over the config file at startup, so
+    //       changes need a restart to rebind). Empty = use the config file. -----
+    /// Plain DNS listen addresses (UDP+TCP), e.g. `["0.0.0.0:53"]`.
+    #[serde(default)]
+    pub dns_listen: Vec<String>,
+    /// DNS-over-TLS listen addresses.
+    #[serde(default)]
+    pub dot_listen: Vec<String>,
+    /// DNS-over-HTTPS listen addresses.
+    #[serde(default)]
+    pub doh_listen: Vec<String>,
+    /// DNS-over-QUIC listen addresses.
+    #[serde(default)]
+    pub doq_listen: Vec<String>,
+    /// DNS-over-HTTP/3 listen addresses.
+    #[serde(default)]
+    pub doh3_listen: Vec<String>,
+    /// HTTP path the DoH endpoint answers on. Empty = config file / default.
+    #[serde(default)]
+    pub doh_path: String,
+    /// Idle timeout for TCP/DoT connections, seconds. 0 = config file / default.
+    #[serde(default)]
+    pub tcp_timeout_secs: u32,
+
+    // ----- TLS (restart to apply). Empty/None = use the config file. -----
+    /// Hostname for the generated certificate and DoH SNI.
+    #[serde(default)]
+    pub tls_hostname: String,
+    /// Obtain a real certificate from Let's Encrypt via ACME.
+    #[serde(default)]
+    pub tls_acme: bool,
+    /// Domains to request the ACME certificate for (defaults to `[hostname]`).
+    #[serde(default)]
+    pub tls_acme_domains: Vec<String>,
+    /// Contact email for the ACME account.
+    #[serde(default)]
+    pub tls_acme_contact: String,
+    /// Use the Let's Encrypt staging environment (testing; untrusted certs).
+    #[serde(default)]
+    pub tls_acme_staging: bool,
+    /// PEM certificate chain path (empty = generated self-signed).
+    #[serde(default)]
+    pub tls_cert_path: String,
+    /// PEM private key path.
+    #[serde(default)]
+    pub tls_key_path: String,
+    /// Auto-generate a self-signed certificate when none is configured.
+    /// `None` = use the config file.
+    #[serde(default)]
+    pub tls_auto_self_signed: Option<bool>,
+
+    // ----- GeoIP (restart to apply). Empty = use the config file. -----
+    /// Path to a GeoLite2/DB-IP City `.mmdb`.
+    #[serde(default)]
+    pub geoip_db: String,
+    /// Path to a GeoLite2/DB-IP ASN `.mmdb`.
+    #[serde(default)]
+    pub asn_db: String,
+
+    // ----- Management server -----
+    /// CIDR allow-list for the management UI/API. Empty = no restriction.
+    #[serde(default)]
+    pub web_allow_networks: Vec<String>,
 }
 
 fn default_true() -> bool {
@@ -344,6 +408,24 @@ impl Default for Settings {
             mdns_zone: String::new(),
             mdns_ttl: 120,
             mdns_publish_public: false,
+            dns_listen: Vec::new(),
+            dot_listen: Vec::new(),
+            doh_listen: Vec::new(),
+            doq_listen: Vec::new(),
+            doh3_listen: Vec::new(),
+            doh_path: String::new(),
+            tcp_timeout_secs: 0,
+            tls_hostname: String::new(),
+            tls_acme: false,
+            tls_acme_domains: Vec::new(),
+            tls_acme_contact: String::new(),
+            tls_acme_staging: false,
+            tls_cert_path: String::new(),
+            tls_key_path: String::new(),
+            tls_auto_self_signed: None,
+            geoip_db: String::new(),
+            asn_db: String::new(),
+            web_allow_networks: Vec::new(),
         }
     }
 }

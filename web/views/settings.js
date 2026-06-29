@@ -4,6 +4,11 @@ import { api } from "../api.js";
 import {
   h, clear, icon, loadingBlock, applyFieldErrors, toast, toastError,
 } from "../ui.js";
+import { listenersView } from "./dashboard.js";
+
+// Helpers for newline/comma-separated list fields.
+const linesToList = (s) => s.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean);
+const listToLines = (v) => (v || []).join("\n");
 
 const PROTOCOLS = ["udp", "tcp", "tls", "https"];
 const DEFAULT_PORTS = { udp: 53, tcp: 53, tls: 853, https: 443 };
@@ -30,6 +35,8 @@ export async function renderSettings(root) {
   root.appendChild(loadingBlock());
   const { settings } = await api.getSettings();
   const original = settings;
+  // Currently-bound listeners (read-only), for the Listeners card.
+  const status = await api.status().catch(() => ({ listeners: [] }));
 
   // ---- Resolution mode (segmented control) ----
   let mode = RESOLUTION_MODES.some((m) => m.id === settings.resolution_mode)
@@ -131,6 +138,36 @@ export async function renderSettings(root) {
   const mdnsTtl = h("input", { type: "number", name: "mdns_ttl", value: settings.mdns_ttl ?? 120, min: 1 });
   const mdnsPublic = h("input", { type: "checkbox", name: "mdns_publish_public", checked: !!settings.mdns_publish_public });
 
+  // ---- Listeners (restart to apply) ----
+  const lnArea = (val, ph) => h("textarea", { rows: 2, spellcheck: false, placeholder: ph,
+    style: "font-family:var(--mono,monospace);width:100%" }, listToLines(val));
+  const dnsListen = lnArea(settings.dns_listen, "0.0.0.0:53");
+  const dotListen = lnArea(settings.dot_listen, "0.0.0.0:853");
+  const dohListen = lnArea(settings.doh_listen, "0.0.0.0:443");
+  const doqListen = lnArea(settings.doq_listen, "0.0.0.0:853");
+  const doh3Listen = lnArea(settings.doh3_listen, "0.0.0.0:443");
+  const dohPath = h("input", { type: "text", value: settings.doh_path || "", placeholder: "/dns-query" });
+  const tcpTimeout = h("input", { type: "number", min: 0, value: settings.tcp_timeout_secs || 0, placeholder: "10" });
+
+  // ---- TLS (restart to apply) ----
+  const tlsHostname = h("input", { type: "text", value: settings.tls_hostname || "", placeholder: "nomina.local" });
+  const tlsSelfSigned = h("input", { type: "checkbox", checked: settings.tls_auto_self_signed !== false });
+  const tlsAcme = h("input", { type: "checkbox", checked: !!settings.tls_acme });
+  const tlsAcmeDomains = lnArea(settings.tls_acme_domains, "dns.example.com");
+  const tlsAcmeContact = h("input", { type: "text", value: settings.tls_acme_contact || "", placeholder: "admin@example.com" });
+  const tlsAcmeStaging = h("input", { type: "checkbox", checked: !!settings.tls_acme_staging });
+  const tlsCertPath = h("input", { type: "text", value: settings.tls_cert_path || "", placeholder: "/etc/nomina/cert.pem" });
+  const tlsKeyPath = h("input", { type: "text", value: settings.tls_key_path || "", placeholder: "/etc/nomina/key.pem" });
+
+  // ---- GeoIP (restart to apply) ----
+  const geoipDb = h("input", { type: "text", value: settings.geoip_db || "", placeholder: "/var/lib/nomina/geo/city.mmdb" });
+  const asnDb = h("input", { type: "text", value: settings.asn_db || "", placeholder: "/var/lib/nomina/geo/asn.mmdb" });
+
+  // ---- Management allow-list ----
+  const allowNets = lnArea(settings.web_allow_networks, "10.0.0.0/8");
+
+  const restartNote = () => h("div.hint", "Binds at startup — changes take effect on restart.");
+
   const save = h("button.btn.btn-primary", "Save settings");
 
   const form = h("form", [
@@ -211,6 +248,72 @@ export async function renderSettings(root) {
           "Allow secondaries from these networks (empty = disabled)."),
         axfrHost,
         addAxfr,
+      ]),
+    ]),
+
+    // Listeners
+    h("div.card.section", [
+      h("div.card-head", [h("h2", "Listeners")]),
+      h("div.card-pad", [
+        h("div.inline-note", { style: "margin-bottom:10px" }, "Currently bound:"),
+        listenersView(status.listeners || []),
+        h("div.form-row", { style: "margin-top:14px" }, [
+          h("div.field", [h("label", "Plain DNS (UDP+TCP)"), dnsListen]),
+          h("div.field", [h("label", "DNS-over-TLS"), dotListen]),
+        ]),
+        h("div.form-row", [
+          h("div.field", [h("label", "DNS-over-HTTPS"), dohListen]),
+          h("div.field", [h("label", "DNS-over-QUIC"), doqListen]),
+        ]),
+        h("div.form-row", [
+          h("div.field", [h("label", "DNS-over-HTTP/3"), doh3Listen]),
+          h("div.field", { style: "max-width:200px" }, [h("label", "DoH path"), dohPath]),
+          h("div.field", { style: "max-width:160px" }, [h("label", "TCP timeout (s)"), tcpTimeout]),
+        ]),
+        h("div.hint", ["One address per line (e.g. ", h("span.mono", "0.0.0.0:53"),
+          "). Empty = use the config file. TLS transports need a certificate. ",
+          "Binds at startup — changes take effect on restart."]),
+      ]),
+    ]),
+
+    // TLS
+    h("div.card.section", [
+      h("div.card-head", [h("h2", "TLS")]),
+      h("div.card-pad", [
+        h("div.field", { style: "max-width:320px" }, [h("label", "Hostname"), tlsHostname]),
+        h("div.field", [h("label.switch", [tlsSelfSigned, h("span.track"), h("span", "Auto self-signed certificate when none configured")])]),
+        h("div.form-row", [
+          h("div.field", [h("label", "Certificate path (PEM)"), tlsCertPath]),
+          h("div.field", [h("label", "Private key path (PEM)"), tlsKeyPath]),
+        ]),
+        h("div.field", [h("label.switch", [tlsAcme, h("span.track"), h("span", "Automatic HTTPS via Let's Encrypt (ACME)")])]),
+        h("div.form-row", [
+          h("div.field", [h("label", "ACME domains"), tlsAcmeDomains]),
+          h("div.field", [h("label", "ACME contact email"), tlsAcmeContact]),
+        ]),
+        h("div.field", [h("label.switch", [tlsAcmeStaging, h("span.track"), h("span", "Use Let's Encrypt staging (testing)")])]),
+        restartNote(),
+      ]),
+    ]),
+
+    // GeoIP
+    h("div.card.section", [
+      h("div.card-head", [h("h2", "GeoIP")]),
+      h("div.card-pad", [
+        h("div.field", [h("label", "City database (.mmdb)"), geoipDb]),
+        h("div.field", [h("label", "ASN database (.mmdb)"), asnDb]),
+        h("div.hint", ["Enables geo-targeted views, the Map, and ASN blocking. MaxMind GeoLite2 or DB-IP's free, account-less lite databases. ",
+          "Loaded at startup — changes take effect on restart."]),
+      ]),
+    ]),
+
+    // Management allow-list
+    h("div.card.section", [
+      h("div.card-head", [h("h2", "Management access")]),
+      h("div.card-pad", [
+        h("div.field", [h("label", "Allowed networks (CIDR)"), allowNets]),
+        h("div.hint", ["Restrict the management UI/API to these networks (one CIDR per line). Empty = no restriction beyond the bind address. ",
+          "Applied at startup — changes take effect on restart."]),
       ]),
     ]),
 
@@ -308,9 +411,31 @@ export async function renderSettings(root) {
       mdns_zone: mdnsZone.value.trim(),
       mdns_ttl: Number(mdnsTtl.value),
       mdns_publish_public: mdnsPublic.checked,
+      dns_listen: linesToList(dnsListen.value),
+      dot_listen: linesToList(dotListen.value),
+      doh_listen: linesToList(dohListen.value),
+      doq_listen: linesToList(doqListen.value),
+      doh3_listen: linesToList(doh3Listen.value),
+      doh_path: dohPath.value.trim(),
+      tcp_timeout_secs: Number(tcpTimeout.value) || 0,
+      tls_hostname: tlsHostname.value.trim(),
+      tls_auto_self_signed: tlsSelfSigned.checked,
+      tls_acme: tlsAcme.checked,
+      tls_acme_domains: linesToList(tlsAcmeDomains.value),
+      tls_acme_contact: tlsAcmeContact.value.trim(),
+      tls_acme_staging: tlsAcmeStaging.checked,
+      tls_cert_path: tlsCertPath.value.trim(),
+      tls_key_path: tlsKeyPath.value.trim(),
+      geoip_db: geoipDb.value.trim(),
+      asn_db: asnDb.value.trim(),
+      web_allow_networks: linesToList(allowNets.value),
     };
 
-    const ARRAY_FIELDS = new Set(["forwarders", "allow_axfr_from", "blocked_asns"]);
+    const ARRAY_FIELDS = new Set([
+      "forwarders", "allow_axfr_from", "blocked_asns",
+      "dns_listen", "dot_listen", "doh_listen", "doq_listen", "doh3_listen",
+      "tls_acme_domains", "web_allow_networks",
+    ]);
     const body = {};
     for (const [k, v] of Object.entries(next)) {
       const changed = ARRAY_FIELDS.has(k)

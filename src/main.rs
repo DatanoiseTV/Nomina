@@ -122,11 +122,83 @@ fn apply_overrides(mut config: Config, cli: &Cli) -> Config {
     config
 }
 
+/// Overlay UI-managed settings (stored in the DB) onto the config file. These
+/// are bound/loaded at startup, so changing them in the UI takes effect on the
+/// next restart. An empty/None setting leaves the config-file value untouched.
+fn apply_settings_to_config(config: &mut Config, s: &models::Settings) {
+    use std::net::SocketAddr;
+    use std::path::PathBuf;
+    fn addrs(v: &[String]) -> Vec<SocketAddr> {
+        v.iter()
+            .filter_map(|a| match a.trim().parse::<SocketAddr>() {
+                Ok(sa) => Some(sa),
+                Err(_) => {
+                    tracing::warn!("ignoring invalid listen address {a:?}");
+                    None
+                }
+            })
+            .collect()
+    }
+    // Listeners
+    if !s.dns_listen.is_empty() {
+        config.dns.listen = addrs(&s.dns_listen);
+    }
+    if !s.dot_listen.is_empty() {
+        config.dns.dot_listen = addrs(&s.dot_listen);
+    }
+    if !s.doh_listen.is_empty() {
+        config.dns.doh_listen = addrs(&s.doh_listen);
+    }
+    if !s.doq_listen.is_empty() {
+        config.dns.doq_listen = addrs(&s.doq_listen);
+    }
+    if !s.doh3_listen.is_empty() {
+        config.dns.doh3_listen = addrs(&s.doh3_listen);
+    }
+    if !s.doh_path.trim().is_empty() {
+        config.dns.doh_path = s.doh_path.trim().to_string();
+    }
+    if s.tcp_timeout_secs > 0 {
+        config.dns.tcp_timeout_secs = s.tcp_timeout_secs as u64;
+    }
+    // TLS
+    if !s.tls_hostname.trim().is_empty() {
+        config.tls.hostname = s.tls_hostname.trim().to_string();
+    }
+    config.tls.acme = config.tls.acme || s.tls_acme;
+    config.tls.acme_staging = config.tls.acme_staging || s.tls_acme_staging;
+    if !s.tls_acme_domains.is_empty() {
+        config.tls.acme_domains = s.tls_acme_domains.clone();
+    }
+    if !s.tls_acme_contact.trim().is_empty() {
+        config.tls.acme_contact = Some(s.tls_acme_contact.trim().to_string());
+    }
+    if !s.tls_cert_path.trim().is_empty() {
+        config.tls.cert_path = Some(PathBuf::from(s.tls_cert_path.trim()));
+    }
+    if !s.tls_key_path.trim().is_empty() {
+        config.tls.key_path = Some(PathBuf::from(s.tls_key_path.trim()));
+    }
+    if let Some(v) = s.tls_auto_self_signed {
+        config.tls.auto_self_signed = v;
+    }
+    // GeoIP
+    if !s.geoip_db.trim().is_empty() {
+        config.geo.geoip_db = Some(PathBuf::from(s.geoip_db.trim()));
+    }
+    if !s.asn_db.trim().is_empty() {
+        config.geo.asn_db = Some(PathBuf::from(s.asn_db.trim()));
+    }
+    // Management allow-list
+    if !s.web_allow_networks.is_empty() {
+        config.web.allow_networks = s.web_allow_networks.clone();
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let config = apply_overrides(Config::load(cli.config.as_deref())?, &cli);
-    let config = Arc::new(config);
+    let mut config = apply_overrides(Config::load(cli.config.as_deref())?, &cli);
 
     init_tracing(&config.log);
 
@@ -146,6 +218,12 @@ async fn main() -> anyhow::Result<()> {
         Db::put_settings(c, &s)?; // persist defaults on first run
         Ok(s)
     })?;
+
+    // Settings managed in the web UI (listeners, TLS, GeoIP, allow-list) override
+    // the config file. They bind sockets / load databases at startup, so changing
+    // them in the UI takes effect on the next restart.
+    apply_settings_to_config(&mut config, &settings);
+    let config = Arc::new(config);
 
     // In-memory authoritative store, upstream resolver, and filter set.
     let store = ZoneStore::load(&db)?;
