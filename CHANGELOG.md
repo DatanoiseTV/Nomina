@@ -17,7 +17,8 @@ All notable changes to Nomina are documented here. The format follows
   found by resolving each blocked domain once in the background purely to
   geolocate the ad/tracker server — and **blocked clients** (orange) — the
   location of public clients whose requests were blocked. Both need a GeoIP City
-  database; LAN/private clients are not plotted.
+  database; LAN/private clients are not plotted. A **Top blocked ASNs** breakdown
+  lists the autonomous systems / ISPs the blocked destinations belong to.
 - **More configuration in the web UI** — Settings now manages the DNS listeners
   (plain/DoT/DoH/DoQ/DoH3 addresses, DoH path, TCP timeout), TLS (hostname,
   self-signed, ACME domains/contact/staging, cert/key paths), the GeoIP database

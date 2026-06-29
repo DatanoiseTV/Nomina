@@ -104,6 +104,12 @@ export async function renderMap(root, { registerCleanup }) {
       ({ label: `AS${a.asn}${a.org ? " " + a.org : ""}`, n: a.count })), "asn"));
   }
 
+  // Top ASNs / ISPs the blocked destinations belong to.
+  if (data.asn && (data.blocked_asns || []).length) {
+    sideCol.appendChild(breakdown("Top blocked ASNs", data.blocked_asns.map((a) =>
+      ({ label: `AS${a.asn}${a.org ? " " + a.org : ""}`, n: a.count })), "asn"));
+  }
+
   // Layout: map + side column when we have locations; side column alone otherwise.
   if (data.geoip) {
     const mapEl = h("div.map-canvas");

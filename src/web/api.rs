@@ -207,8 +207,29 @@ pub async fn map_points(State(state): State<SharedState>, _auth: Authed) -> Resp
             })
             .collect()
     };
+    let blocked_dest = state.stats.blocked_dest_ips();
     let blocked = geo_points(state.stats.blocked_dest_ips());
     let blocked_clients = geo_points(state.stats.blocked_client_ips());
+
+    // Top ASNs / ISPs the blocked destinations belong to.
+    let asn_breakdown = |ips: Vec<(std::net::IpAddr, u64)>| -> Vec<Value> {
+        let mut agg: HashMap<u32, (String, u64)> = HashMap::new();
+        for (ip, count) in ips {
+            let g = geo.lookup(ip);
+            if let Some(asn) = g.asn {
+                let e = agg.entry(asn).or_insert_with(|| (g.asn_org.clone().unwrap_or_default(), 0));
+                e.1 += count;
+            }
+        }
+        let mut out: Vec<Value> = agg
+            .into_iter()
+            .map(|(asn, (org, count))| json!({ "asn": asn, "org": org, "count": count }))
+            .collect();
+        out.sort_by(|a, b| b["count"].as_u64().cmp(&a["count"].as_u64()));
+        out.truncate(20);
+        out
+    };
+    let blocked_asns = asn_breakdown(blocked_dest);
 
     let origin = state.stats.origin().map(|o| {
         json!({ "lat": o.lat, "lon": o.lon, "city": o.city, "country": o.country, "ip": o.ip })
@@ -218,6 +239,7 @@ pub async fn map_points(State(state): State<SharedState>, _auth: Authed) -> Resp
         "asn": geo.has_asn(),
         "points": points,
         "asns": asns,
+        "blocked_asns": blocked_asns,
         "blocked": blocked,
         "blocked_clients": blocked_clients,
         "origin": origin,
