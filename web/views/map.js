@@ -40,6 +40,39 @@ export async function renderMap(root, { registerCleanup }) {
     h("div", [h("h1", "Map"), h("div.subtitle", "Where the resolved IP addresses are located.")]),
   ]));
 
+  // "Your data has travelled ~X km" — great-circle distance from this server to
+  // every resolved destination, weighted by hits. Live-updates as queries flow.
+  let kmEl = null;
+  if (data.origin) {
+    kmEl = h("span.travel-km", "0");
+    root.appendChild(h("div.travel-banner.card", h("div.card-pad", [
+      h("span", "Your data has travelled about "),
+      kmEl,
+      h("span", " km"),
+      h("span.travel-origin", ` — from ${data.origin.city || "here"}${data.origin.country ? ", " + data.origin.country : ""}`),
+    ])));
+    let shown = 0;
+    const tweenTo = (target) => {
+      const from = shown, t0 = performance.now(), dur = 900;
+      const step = (now) => {
+        const k = Math.min(1, (now - t0) / dur);
+        shown = Math.round(from + (target - from) * (1 - Math.pow(1 - k, 3)));
+        kmEl.textContent = shown.toLocaleString();
+        if (k < 1) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    };
+    tweenTo(totalKm(data.origin, data.points));
+    // Live refresh: re-fetch and re-tween the counter without rebuilding markers.
+    const timer = setInterval(async () => {
+      try {
+        const fresh = await api.mapPoints();
+        if (fresh.origin) tweenTo(totalKm(fresh.origin, fresh.points));
+      } catch (_) { /* keep last value */ }
+    }, 8000);
+    if (registerCleanup) registerCleanup(() => clearInterval(timer));
+  }
+
   if (!data.geoip && !data.asn) {
     root.appendChild(h("div.card", h("div.card-pad", h("div.empty", [
       h("h3", "No GeoIP database"),
@@ -99,11 +132,20 @@ export async function renderMap(root, { registerCleanup }) {
     const resolved = layer(data.points, "#818cf8", "Resolved").addTo(map);
     const blocked = layer(data.blocked, "#ef4444", "Blocked destination").addTo(map);
     const blockedClients = layer(data.blocked_clients, "#f59e0b", "Blocked client").addTo(map);
-    L.control.layers(null, {
+    const overlays = {
       "Resolved": resolved,
       "Blocked destination": blocked,
       "Blocked client": blockedClients,
-    }, { collapsed: false }).addTo(map);
+    };
+    // The server's own location (the origin of the distance counter).
+    if (data.origin) {
+      const home = L.circleMarker([data.origin.lat, data.origin.lon], {
+        radius: 8, color: "#10b981", weight: 2, fillColor: "#34d399", fillOpacity: 0.9,
+      }).bindPopup(`<b>This server</b><br>${data.origin.city || ""}${data.origin.country ? ", " + data.origin.country : ""}`);
+      const homeLayer = L.layerGroup([home]).addTo(map);
+      overlays["This server"] = homeLayer;
+    }
+    L.control.layers(null, overlays, { collapsed: false }).addTo(map);
 
     setTimeout(() => map.invalidateSize(), 120);
     if (registerCleanup) registerCleanup(() => { try { map.remove(); } catch (_) {} });
@@ -144,6 +186,23 @@ function breakdown(title, items, mode = "country") {
     h("h2", { style: "margin:0 0 12px" }, title),
     h("div.card.map-side-card", h("div.card-pad", h("div.qtype-bar", rows))),
   ]);
+}
+
+// Great-circle distance (km) between two {lat,lon} points.
+function haversine(a, b) {
+  const R = 6371, rad = (d) => (d * Math.PI) / 180;
+  const dLat = rad(b.lat - a.lat), dLon = rad(b.lon - a.lon);
+  const h = Math.sin(dLat / 2) ** 2 +
+    Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+// Total km from the origin to every resolved destination, weighted by hits.
+function totalKm(origin, points) {
+  if (!origin) return 0;
+  let sum = 0;
+  for (const p of points || []) sum += haversine(origin, p) * (p.count || 1);
+  return Math.round(sum);
 }
 
 // ISO-3166 alpha-2 -> regional-indicator flag emoji.

@@ -826,6 +826,29 @@ dialog::backdrop { background: rgba(10, 14, 22, 0.5); backdrop-filter: blur(3px)
 }
 
 /* ============ Map (Leaflet) ============ */
+/* "Your data has travelled ~X km" counter banner. */
+.travel-banner {
+  margin-bottom: 14px;
+}
+.travel-banner .card-pad {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 1.05rem;
+}
+.travel-km {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: 1.6rem;
+  color: var(--accent);
+  margin: 0 2px;
+}
+.travel-origin {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
 /* Map + country breakdown share one viewport-height row so the page fits
    without scrolling. Map fills its cell; the side list scrolls internally. */
 .map-layout {

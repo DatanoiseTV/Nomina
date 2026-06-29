@@ -210,6 +210,9 @@ pub async fn map_points(State(state): State<SharedState>, _auth: Authed) -> Resp
     let blocked = geo_points(state.stats.blocked_dest_ips());
     let blocked_clients = geo_points(state.stats.blocked_client_ips());
 
+    let origin = state.stats.origin().map(|o| {
+        json!({ "lat": o.lat, "lon": o.lon, "city": o.city, "country": o.country, "ip": o.ip })
+    });
     ok_json(json!({
         "geoip": geo.has_geoip(),
         "asn": geo.has_asn(),
@@ -217,6 +220,7 @@ pub async fn map_points(State(state): State<SharedState>, _auth: Authed) -> Resp
         "asns": asns,
         "blocked": blocked,
         "blocked_clients": blocked_clients,
+        "origin": origin,
     }))
 }
 

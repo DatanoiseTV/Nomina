@@ -7,6 +7,11 @@ All notable changes to Nomina are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **"Your data has travelled ~X km" counter** — a live counter on the Map adds up
+  the great-circle distance from this server to every resolved destination
+  (weighted by hits) and animates as queries flow. The server's own location is
+  found once at startup from its public IP (key-less echo service) geolocated via
+  the GeoIP City database, and shown as a green marker.
 - **Blocked traffic on the Map** — two new toggleable layers beside the resolved
   points: **blocked destinations** (red) — where blocked domains are hosted,
   found by resolving each blocked domain once in the background purely to

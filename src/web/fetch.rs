@@ -1,8 +1,33 @@
 //! Downloading and parsing remote blocklists (hosts files / domain lists).
 
+use std::net::IpAddr;
 use std::time::Duration;
 
 use crate::models::BlocklistFormat;
+
+/// Best-effort discovery of this host's public IP via key-less echo services,
+/// used to geolocate the server for the "distance travelled" counter.
+pub async fn public_ip() -> Option<IpAddr> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(8))
+        .user_agent(concat!("Nomina/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .ok()?;
+    for url in [
+        "https://api.ipify.org",
+        "https://icanhazip.com",
+        "https://ifconfig.me/ip",
+    ] {
+        if let Ok(resp) = client.get(url).send().await {
+            if let Ok(text) = resp.text().await {
+                if let Ok(ip) = text.trim().parse::<IpAddr>() {
+                    return Some(ip);
+                }
+            }
+        }
+    }
+    None
+}
 
 /// Fetch a blocklist URL and parse it into a deduplicated list of domains.
 pub async fn fetch_blocklist(url: &str, format: BlocklistFormat) -> anyhow::Result<Vec<String>> {

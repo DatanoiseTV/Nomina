@@ -286,6 +286,34 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // Determine the server's own location (public IP -> GeoIP) for the
+    // "distance travelled" counter. Best-effort; needs a GeoIP City database.
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            if !state.geo().has_geoip() {
+                return;
+            }
+            for attempt in 0..6u32 {
+                if let Some(ip) = web::fetch::public_ip().await {
+                    let g = state.geo().lookup(ip);
+                    if let (Some(lat), Some(lon)) = (g.lat, g.lon) {
+                        state.stats.set_origin(crate::stats::OriginGeo {
+                            ip: ip.to_string(),
+                            lat,
+                            lon,
+                            city: g.city.unwrap_or_default(),
+                            country: g.country.unwrap_or_default(),
+                        });
+                        tracing::info!("server location for distance counter: {ip}");
+                        return;
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(15 * (attempt + 1) as u64)).await;
+            }
+        });
+    }
+
     // Background query-log writer: batch-insert and cap the table size.
     {
         let db = state.db.clone();

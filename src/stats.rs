@@ -156,8 +156,21 @@ pub struct Stats {
     blocked_client: Mutex<HashMap<IpAddr, u64>>,
     /// Blocklist id -> number of blocks attributed to it.
     blocklist_hits: Mutex<HashMap<i64, u64>>,
+    /// This server's own geolocation (public IP resolved at startup), for the
+    /// "distance travelled" counter. `None` until determined / if unavailable.
+    origin: Mutex<Option<OriginGeo>>,
     started: Instant,
     started_at: String,
+}
+
+/// The server's own location, for the distance counter.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct OriginGeo {
+    pub ip: String,
+    pub lat: f64,
+    pub lon: f64,
+    pub city: String,
+    pub country: String,
 }
 
 impl Default for Stats {
@@ -174,6 +187,7 @@ impl Default for Stats {
             blocked_dest: Mutex::new(HashMap::new()),
             blocked_client: Mutex::new(HashMap::new()),
             blocklist_hits: Mutex::new(HashMap::new()),
+            origin: Mutex::new(None),
             started: Instant::now(),
             started_at: OffsetDateTime::now_utc()
                 .format(&Rfc3339)
@@ -383,6 +397,16 @@ impl Stats {
     /// Snapshot of blocked-client IPs and counts (for `/api/map`).
     pub fn blocked_client_ips(&self) -> Vec<(IpAddr, u64)> {
         self.blocked_client.lock().iter().map(|(k, v)| (*k, *v)).collect()
+    }
+
+    /// Record this server's own geolocation (the distance counter's origin).
+    pub fn set_origin(&self, o: OriginGeo) {
+        *self.origin.lock() = Some(o);
+    }
+
+    /// This server's own geolocation, if determined.
+    pub fn origin(&self) -> Option<OriginGeo> {
+        self.origin.lock().clone()
     }
 
     /// Attribute a block to the blocklist that supplied the domain.
