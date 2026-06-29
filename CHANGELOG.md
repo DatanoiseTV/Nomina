@@ -15,7 +15,10 @@ All notable changes to Nomina are documented here. The format follows
   within seconds, not just when devices happen to announce; re-issues the address
   questions other LAN clients ask, so service-less hosts (e.g. a Raspberry Pi)
   surface too; and joins the multicast group on every interface (not just the
-  default) for multi-homed hosts. Configured at runtime
+  default) for multi-homed hosts. Queries carry the unicast-response (QU) bit and
+  go out a dedicated socket, so answers arrive even on macOS, where the system
+  mDNSResponder otherwise monopolizes inbound multicast on port 5353. Configured
+  at runtime
   in **Settings → mDNS** (enable, publish zone, TTL) — toggling starts/stops the
   listener live, no restart. Also answers **reverse (PTR)** lookups for discovered
   hosts (IP → `<host>.<zone>`). By default only **LAN-scoped** addresses are

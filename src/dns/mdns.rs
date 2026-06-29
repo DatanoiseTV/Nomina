@@ -139,14 +139,18 @@ pub fn is_lan_addr(ip: &IpAddr) -> bool {
     }
 }
 
-/// Build a multicast-DNS query carrying one or more questions. Class is left as
-/// plain `IN` (QM, the top "unicast-response" bit clear) so responders answer on
-/// multicast — where this passive listener can snoop the addresses.
+/// Build a multicast-DNS query carrying one or more questions, each with the
+/// **QU** ("unicast response requested") bit set. Responders then answer by
+/// unicast directly to our query socket's port — which we own exclusively —
+/// instead of multicasting to :5353. This is essential on macOS, where the
+/// system mDNSResponder monopolizes inbound multicast on :5353 so a shared
+/// socket only ever sees this host's own traffic.
 fn query_for(questions: &[(Name, RecordType)]) -> Vec<u8> {
     let mut msg = Message::new(0, MessageType::Query, OpCode::Query);
     for (name, rtype) in questions {
         let mut q = Query::query(name.clone(), *rtype);
         q.set_query_class(DNSClass::IN);
+        q.set_mdns_unicast_response(true);
         msg.add_query(q);
     }
     msg.to_vec().unwrap_or_default()
@@ -246,6 +250,17 @@ fn bind_socket() -> std::io::Result<UdpSocket> {
     UdpSocket::from_std(sock.into())
 }
 
+/// A separate UDP socket on an ephemeral, exclusively-owned port for *sending*
+/// QU queries and *receiving* the unicast responses — the path that works even
+/// when the system responder owns :5353.
+fn bind_query_socket() -> std::io::Result<UdpSocket> {
+    let sock = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+    sock.set_nonblocking(true)?;
+    sock.set_multicast_ttl_v4(255)?;
+    sock.bind(&SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)).into())?;
+    UdpSocket::from_std(sock.into())
+}
+
 /// IPv4 addresses of every up, multicast-capable, non-loopback interface — used
 /// as the local-interface selector for IGMP joins.
 fn lan_interface_addrs() -> Vec<Ipv4Addr> {
@@ -304,58 +319,80 @@ pub async fn supervise(state: crate::state::SharedState) {
     }
 }
 
-/// Run the mDNS listener: learn hosts from multicast traffic and actively walk
-/// the DNS-SD chain to pull addresses onto the wire. Returns (logs and stops) if
-/// the socket can't bind. Records are inserted with the live configured TTL.
+/// Learn any `*.local` host addresses in a received message (subject to the
+/// LAN-only/public policy) and return the follow-up questions to ask next.
+fn learn_and_plan(
+    bytes: &[u8],
+    state: &crate::state::SharedState,
+    queried: &mut HashSet<String>,
+) -> Vec<(Name, RecordType)> {
+    let Ok(msg) = Message::from_vec(bytes) else {
+        return Vec::new();
+    };
+    let ttl = Duration::from_secs(state.mdns_ttl() as u64);
+    let publish_public = state.mdns_publish_public();
+    let reg = state.mdns();
+    for (host, ip) in hosts_from_message(&msg) {
+        if publish_public || is_lan_addr(&ip) {
+            reg.insert(&host, ip, ttl);
+        }
+    }
+    follow_up_questions(&msg, queried)
+}
+
+/// Run the mDNS listener. Two sockets cooperate:
+///
+/// - `mcast` (UDP 5353, all interfaces) snoops multicast announcements and other
+///   clients' queries — the passive path, and the only one that works when
+///   nomina *is* the primary responder (e.g. Linux without avahi).
+/// - `qsock` (ephemeral, ours alone) sends QU queries and receives the unicast
+///   answers — the active path that works even when the OS responder owns 5353.
+///
+/// Both feed the same registry; the active chase always asks via `qsock`.
 pub async fn run(state: crate::state::SharedState) {
-    let registry = state.mdns();
-    let sock = match bind_socket() {
+    let mcast = match bind_socket() {
         Ok(s) => s,
         Err(e) => {
             warn!("mDNS discovery disabled (cannot bind :5353): {e}");
             return;
         }
     };
-    tracing::info!("mDNS discovery listening on 224.0.0.251:5353");
+    let qsock = match bind_query_socket() {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("mDNS discovery disabled (cannot bind query socket): {e}");
+            return;
+        }
+    };
+    tracing::info!("mDNS discovery active (multicast :5353 + unicast query socket)");
     let dest = SocketAddr::from((MDNS_V4, MDNS_PORT));
-    let _ = sock.send_to(&enumeration_query(), dest).await;
+    let _ = qsock.send_to(&enumeration_query(), dest).await;
 
-    // Names we have already asked about this cycle; cleared on each tick so the
-    // chain is re-walked periodically (and freed hosts get re-confirmed).
+    // Names already asked this cycle; cleared on each tick so the chain is
+    // re-walked periodically (and known hosts get re-confirmed).
     let mut queried: HashSet<String> = HashSet::new();
-    let mut buf = vec![0u8; 9000];
+    let mut mbuf = vec![0u8; 9000];
+    let mut qbuf = vec![0u8; 9000];
     let mut tick = tokio::time::interval(Duration::from_secs(30));
     loop {
-        tokio::select! {
-            res = sock.recv_from(&mut buf) => match res {
-                Ok((n, src)) => {
-                    let Ok(msg) = Message::from_vec(&buf[..n]) else { continue };
-                    // Passive harvest: learn any *.local host addresses present.
-                    // By default only LAN-scoped addresses are republished; the
-                    // operator can opt in to public addresses too.
-                    let ttl = Duration::from_secs(state.mdns_ttl() as u64);
-                    let publish_public = state.mdns_publish_public();
-                    for (host, ip) in hosts_from_message(&msg) {
-                        if publish_public || is_lan_addr(&ip) {
-                            registry.insert(&host, ip, ttl);
-                        }
-                    }
-                    // Active chase: advance the DNS-SD chain toward addresses.
-                    let follow = follow_up_questions(&msg, &mut queried);
-                    if !follow.is_empty() {
-                        // Chunk to keep individual query packets small.
-                        for batch in follow.chunks(16) {
-                            let _ = sock.send_to(&query_for(batch), dest).await;
-                        }
-                        tracing::debug!("mDNS rx {n}B from {src}: asked {} follow-up(s)", follow.len());
-                    }
-                }
-                Err(e) => warn!("mDNS recv error: {e}"),
+        let follow = tokio::select! {
+            res = mcast.recv_from(&mut mbuf) => match res {
+                Ok((n, _src)) => learn_and_plan(&mbuf[..n], &state, &mut queried),
+                Err(e) => { warn!("mDNS multicast recv error: {e}"); continue }
+            },
+            res = qsock.recv_from(&mut qbuf) => match res {
+                Ok((n, _src)) => learn_and_plan(&qbuf[..n], &state, &mut queried),
+                Err(e) => { warn!("mDNS unicast recv error: {e}"); continue }
             },
             _ = tick.tick() => {
                 queried.clear();
-                let _ = sock.send_to(&enumeration_query(), dest).await;
+                let _ = qsock.send_to(&enumeration_query(), dest).await;
+                continue;
             }
+        };
+        // Ask follow-ups (QU) via our own socket so the answers come back to us.
+        for batch in follow.chunks(16) {
+            let _ = qsock.send_to(&query_for(batch), dest).await;
         }
     }
 }
