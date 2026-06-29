@@ -122,6 +122,14 @@ export async function renderSettings(root) {
   const cacheMin = h("input", { type: "number", name: "cache_min_ttl", value: settings.cache_min_ttl ?? 0, min: 0 });
   const cacheMax = h("input", { type: "number", name: "cache_max_ttl", value: settings.cache_max_ttl ?? 86400, min: 0 });
 
+  // ---- mDNS discovery ----
+  const mdnsEnabled = h("input", { type: "checkbox", name: "mdns_enabled", checked: !!settings.mdns_enabled });
+  const mdnsZone = h("input", {
+    type: "text", name: "mdns_zone", value: settings.mdns_zone || "",
+    placeholder: "e.g. lan",
+  });
+  const mdnsTtl = h("input", { type: "number", name: "mdns_ttl", value: settings.mdns_ttl ?? 120, min: 1 });
+
   const save = h("button.btn.btn-primary", "Save settings");
 
   const form = h("form", [
@@ -205,6 +213,26 @@ export async function renderSettings(root) {
       ]),
     ]),
 
+    // mDNS discovery
+    h("div.card.section", [
+      h("div.card-head", [h("h2", "mDNS")]),
+      h("div.card-pad", [
+        h("div.field", [
+          h("label.switch", [mdnsEnabled, h("span.track"),
+            h("span", "Discover LAN hosts via mDNS")]),
+        ]),
+        h("div.form-row", [
+          h("div.field", { style: "max-width:240px" }, [h("label", "Publish zone"), mdnsZone,
+            h("div.hint", ["Discovered ", h("span.mono", "*.local"),
+              " hosts are republished under this suffix (e.g. ", h("span.mono", "macbook.lan"),
+              "). Empty = discover only, don't publish."])]),
+          h("div.field", { style: "max-width:160px" }, [h("label", "Record TTL (s)"), mdnsTtl,
+            h("div.hint", "Low by design.")]),
+        ]),
+        h("div.hint", "Listens on UDP 5353 and coexists with a system responder. Takes effect within a couple of seconds; no restart needed."),
+      ]),
+    ]),
+
     h("div", { style: "display:flex;justify-content:flex-end" }, save),
   ]);
 
@@ -270,6 +298,9 @@ export async function renderSettings(root) {
       dnssec_validate_upstream: dnssec.checked,
       load_balance: loadBalance.value,
       blocked_asns: asns,
+      mdns_enabled: mdnsEnabled.checked,
+      mdns_zone: mdnsZone.value.trim(),
+      mdns_ttl: Number(mdnsTtl.value),
     };
 
     const ARRAY_FIELDS = new Set(["forwarders", "allow_axfr_from", "blocked_asns"]);

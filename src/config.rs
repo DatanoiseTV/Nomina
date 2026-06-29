@@ -24,21 +24,6 @@ pub struct Config {
     pub privileges: PrivilegesConfig,
     pub geo: GeoConfig,
     pub dhcp: DhcpConfig,
-    pub mdns: MdnsConfig,
-}
-
-/// Discover LAN hosts via mDNS (multicast DNS, `*.local`) and publish them as
-/// low-TTL A/AAAA records under `zone`, so e.g. `macbook.local` becomes
-/// resolvable as `macbook.<zone>`. Listens on UDP 5353 (no privileges needed).
-#[derive(Clone, Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct MdnsConfig {
-    /// Enable mDNS discovery + publishing.
-    pub enabled: bool,
-    /// Suffix to publish discovered hosts under (e.g. `lan` or `local.home.lan`).
-    pub zone: Option<String>,
-    /// TTL (seconds) for the published records. Low by design; default 120.
-    pub ttl: Option<u32>,
 }
 
 /// DHCP server listeners. Empty lists disable the corresponding family — by
@@ -149,7 +134,6 @@ impl Default for Config {
             privileges: PrivilegesConfig::default(),
             geo: GeoConfig::default(),
             dhcp: DhcpConfig::default(),
-            mdns: MdnsConfig::default(),
         }
     }
 }

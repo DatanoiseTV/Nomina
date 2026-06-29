@@ -91,14 +91,5 @@ auto_self_signed = true
 # v4_listen = ["0.0.0.0:67"]
 # v6_listen = ["[::]:547"]
 
-[mdns]
-# Discover LAN hosts via multicast DNS (the *.local names Apple Bonjour / Avahi
-# announce) and republish them as low-TTL records under a zone you control, so
-# `macbook.local` also resolves as `macbook.<zone>` for clients that can't do
-# mDNS themselves. Passive: it learns from multicast traffic and sends a periodic
-# service-enumeration query; it does not claim names or answer on :5353. Listens
-# on UDP 5353 (unprivileged) and coexists with a system responder (SO_REUSEPORT).
-# Disabled by default.
-# enabled = true
-# zone = "lan"     # publish discovered hosts under this suffix, e.g. macbook.lan
-# ttl = 120        # seconds; deliberately low so stale entries age out quickly
+# mDNS discovery (discover *.local LAN hosts and republish them under a zone you
+# choose) is configured at runtime in the web UI under Settings -> mDNS, not here.

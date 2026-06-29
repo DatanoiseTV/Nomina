@@ -157,6 +157,21 @@ impl AppState {
         self.settings.read().blocked_asns.clone()
     }
 
+    pub fn mdns_enabled(&self) -> bool {
+        self.settings.read().mdns_enabled
+    }
+
+    /// Configured mDNS publish zone, normalized (trimmed, lowercased). `None`
+    /// when unset, so publishing is effectively off.
+    pub fn mdns_zone(&self) -> Option<String> {
+        let z = self.settings.read().mdns_zone.trim().trim_end_matches('.').to_ascii_lowercase();
+        if z.is_empty() { None } else { Some(z) }
+    }
+
+    pub fn mdns_ttl(&self) -> u32 {
+        self.settings.read().mdns_ttl.max(1)
+    }
+
     /// Next round-robin rotation offset.
     pub fn next_rotation(&self) -> u64 {
         self.rr_counter.fetch_add(1, Ordering::Relaxed)

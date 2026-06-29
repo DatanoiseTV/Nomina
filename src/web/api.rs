@@ -110,8 +110,8 @@ pub async fn status(State(state): State<SharedState>, _auth: Authed) -> ApiResul
             "asn": state.geo().has_asn(),
         },
         "mdns": {
-            "enabled": state.config.mdns.enabled,
-            "zone": state.config.mdns.zone,
+            "enabled": state.mdns_enabled(),
+            "zone": state.mdns_zone(),
             "hosts": state.mdns().count(),
         },
     })))
@@ -140,28 +140,37 @@ pub async fn stats(State(state): State<SharedState>, _auth: Authed) -> Response 
     ok_json(snap)
 }
 
-/// Geolocated resolved-IP points for the map. Aggregates the tracked public
-/// answer IPs by location (needs a GeoLite2/DB-IP City database).
+/// Geolocated resolved-IP points for the map, plus a top-ASN breakdown.
+/// Locations need a GeoLite2/DB-IP City database; ASNs need an ASN database.
 pub async fn map_points(State(state): State<SharedState>, _auth: Authed) -> Response {
     let geo = state.geo();
-    if !geo.has_geoip() {
-        return ok_json(json!({ "geoip": false, "points": [] }));
+    if !geo.has_geoip() && !geo.has_asn() {
+        return ok_json(json!({ "geoip": false, "asn": false, "points": [], "asns": [] }));
     }
     use std::collections::HashMap;
     // Aggregate by rounded lat/lon so nearby cities cluster into one marker.
     let mut agg: HashMap<(i64, i64), (f64, f64, String, String, u64)> = HashMap::new();
+    // Aggregate resolved-IP hits by ASN.
+    let mut asn_agg: HashMap<u32, (String, u64)> = HashMap::new();
     for (ip, count) in state.stats.resolved_ips() {
         let g = geo.lookup(ip);
-        let (Some(lat), Some(lon)) = (g.lat, g.lon) else { continue };
-        let key = ((lat * 20.0).round() as i64, (lon * 20.0).round() as i64);
-        let e = agg.entry(key).or_insert((
-            lat,
-            lon,
-            g.city.clone().unwrap_or_default(),
-            g.country.clone().unwrap_or_default(),
-            0,
-        ));
-        e.4 += count;
+        if let (Some(lat), Some(lon)) = (g.lat, g.lon) {
+            let key = ((lat * 20.0).round() as i64, (lon * 20.0).round() as i64);
+            let e = agg.entry(key).or_insert((
+                lat,
+                lon,
+                g.city.clone().unwrap_or_default(),
+                g.country.clone().unwrap_or_default(),
+                0,
+            ));
+            e.4 += count;
+        }
+        if let Some(asn) = g.asn {
+            let e = asn_agg
+                .entry(asn)
+                .or_insert_with(|| (g.asn_org.clone().unwrap_or_default(), 0));
+            e.1 += count;
+        }
     }
     let points: Vec<_> = agg
         .values()
@@ -169,14 +178,24 @@ pub async fn map_points(State(state): State<SharedState>, _auth: Authed) -> Resp
             json!({ "lat": lat, "lon": lon, "city": city, "country": country, "count": count })
         })
         .collect();
-    ok_json(json!({ "geoip": true, "points": points }))
+    let mut asns: Vec<_> = asn_agg
+        .into_iter()
+        .map(|(asn, (org, count))| json!({ "asn": asn, "org": org, "count": count }))
+        .collect();
+    asns.sort_by(|a, b| b["count"].as_u64().cmp(&a["count"].as_u64()));
+    asns.truncate(20);
+    ok_json(json!({
+        "geoip": geo.has_geoip(),
+        "asn": geo.has_asn(),
+        "points": points,
+        "asns": asns,
+    }))
 }
 
 /// mDNS discovery state and the live list of learned `*.local` hosts, with the
 /// zone/TTL they are republished under.
 pub async fn mdns_hosts(State(state): State<SharedState>, _auth: Authed) -> Response {
-    let cfg = &state.config.mdns;
-    let zone = cfg.zone.as_deref().map(|z| z.trim_end_matches('.').to_ascii_lowercase());
+    let zone = state.mdns_zone();
     let hosts: Vec<_> = state
         .mdns()
         .snapshot()
@@ -192,9 +211,9 @@ pub async fn mdns_hosts(State(state): State<SharedState>, _auth: Authed) -> Resp
         })
         .collect();
     ok_json(json!({
-        "enabled": cfg.enabled,
+        "enabled": state.mdns_enabled(),
         "zone": zone,
-        "ttl": cfg.ttl.unwrap_or(120),
+        "ttl": state.mdns_ttl(),
         "hosts": hosts,
     }))
 }
@@ -1177,6 +1196,9 @@ pub struct SettingsUpdate {
     axfr_require_tsig: Option<bool>,
     load_balance: Option<LoadBalance>,
     blocked_asns: Option<Vec<u32>>,
+    mdns_enabled: Option<bool>,
+    mdns_zone: Option<String>,
+    mdns_ttl: Option<u32>,
 }
 
 pub async fn get_settings(State(state): State<SharedState>, _auth: Authed) -> ApiResult<Response> {
@@ -1256,6 +1278,16 @@ pub async fn put_settings(
     }
     if let Some(v) = req.blocked_asns {
         settings.blocked_asns = v;
+    }
+    if let Some(v) = req.mdns_enabled {
+        settings.mdns_enabled = v;
+    }
+    if let Some(v) = req.mdns_zone {
+        // Normalize: trim, drop a trailing dot, lowercase.
+        settings.mdns_zone = v.trim().trim_end_matches('.').to_ascii_lowercase();
+    }
+    if let Some(v) = req.mdns_ttl {
+        settings.mdns_ttl = v.max(1);
     }
 
     let to_store = settings.clone();

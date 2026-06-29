@@ -23,6 +23,8 @@ pub struct ClientGeo {
     pub lon: Option<f64>,
     /// Autonomous System number.
     pub asn: Option<u32>,
+    /// Autonomous System organization name (e.g. `Cloudflare, Inc.`).
+    pub asn_org: Option<String>,
 }
 
 /// Loaded MaxMind databases. Either or both may be absent.
@@ -98,6 +100,10 @@ impl GeoDb {
             if let Ok(res) = r.lookup(ip) {
                 g.asn = res
                     .decode_path::<u32>(&path!["autonomous_system_number"])
+                    .ok()
+                    .flatten();
+                g.asn_org = res
+                    .decode_path::<String>(&path!["autonomous_system_organization"])
                     .ok()
                     .flatten();
             }

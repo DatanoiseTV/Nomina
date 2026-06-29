@@ -7,14 +7,18 @@ All notable changes to Nomina are documented here. The format follows
 ## [Unreleased]
 
 ### Added
-- **mDNS discovery & republishing** — enable `[mdns]` to discover the `*.local`
-  hosts Bonjour/Avahi announce on the LAN and republish them as low-TTL records
-  under a zone you choose (e.g. `macbook.local` → `macbook.lan`), so clients that
-  can't speak mDNS still resolve LAN hosts. Actively walks the DNS-SD chain
-  (service types → instances → SRV → A/AAAA) so addresses are pulled onto
-  multicast and learned within seconds, not just when devices happen to announce.
-  Listens on UDP 5353, coexists with a system responder, and surfaces the learned
-  hosts in a **Discovered** view (`/api/mdns`) plus a host count in `/api/status`.
+- **mDNS discovery & republishing** — discover the `*.local` hosts Bonjour/Avahi
+  announce on the LAN and republish them as low-TTL records under a zone you
+  choose (e.g. `macbook.local` → `macbook.lan`), so clients that can't speak mDNS
+  still resolve LAN hosts. Actively walks the DNS-SD chain (service types →
+  instances → SRV → A/AAAA) so addresses are pulled onto multicast and learned
+  within seconds, not just when devices happen to announce. Configured at runtime
+  in **Settings → mDNS** (enable, publish zone, TTL) — toggling starts/stops the
+  listener live, no restart. Listens on UDP 5353, coexists with a system
+  responder, and surfaces the learned hosts in an **mDNS** view (`/api/mdns`).
+- **Top ASNs on the Map** — the Map view now lists the autonomous systems the
+  resolved IPs belong to (e.g. Cloudflare, Google) alongside the Top countries
+  breakdown, using the GeoLite2/DB-IP ASN database.
 - **Per-blocklist hit counts** — each block is attributed to the blocklist that
   supplied the domain; the Blocklists page shows a live "Hits" column so you can
   see which lists actually do the work.

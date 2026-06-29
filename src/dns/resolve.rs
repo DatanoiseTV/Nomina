@@ -235,20 +235,16 @@ fn apply_load_balance(answers: &mut [Record], mode: LoadBalance, rotation: impl 
 /// Answer `<host>.<mdns-zone>` A/AAAA queries from the mDNS registry, when mDNS
 /// discovery is enabled. Returns `None` if disabled, out of zone, or unknown.
 fn mdns_answer(state: &AppState, qname: &Name, qtype: RecordType) -> Option<Vec<Record>> {
-    let cfg = &state.config.mdns;
-    if !cfg.enabled || !matches!(qtype, RecordType::A | RecordType::AAAA | RecordType::ANY) {
+    if !state.mdns_enabled() || !matches!(qtype, RecordType::A | RecordType::AAAA | RecordType::ANY) {
         return None;
     }
-    let zone = cfg.zone.as_deref()?.trim_end_matches('.').to_ascii_lowercase();
-    if zone.is_empty() {
-        return None;
-    }
+    let zone = state.mdns_zone()?;
     let name = qname.to_string().trim_end_matches('.').to_ascii_lowercase();
     let label = name.strip_suffix(&format!(".{zone}"))?;
     if label.is_empty() || label.contains('.') {
         return None; // only flat hosts directly under the zone
     }
-    let ttl = cfg.ttl.unwrap_or(120);
+    let ttl = state.mdns_ttl();
     let answers: Vec<Record> = state
         .mdns()
         .lookup(label, qtype)

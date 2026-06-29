@@ -19,7 +19,7 @@ export async function renderMdns(root, { registerCleanup }) {
   clear(root);
   root.appendChild(h("div.page-head", [
     h("div", [
-      h("h1", "Discovered"),
+      h("h1", "mDNS"),
       h("div.subtitle", "LAN hosts learned via mDNS and republished under your zone."),
     ]),
   ]));
@@ -45,10 +45,9 @@ function paint(body, data) {
   if (!data.enabled) {
     body.appendChild(h("div.card", h("div.card-pad", h("div.empty", [
       h("h3", "mDNS discovery is off"),
-      h("p", ["Enable it in the ", h("code", "[mdns]"), " section of your config — set ",
-        h("span.mono", "enabled = true"), " and a ", h("span.mono", "zone"),
-        " (e.g. ", h("span.mono", "lan"), "), then restart. It binds UDP 5353 and ",
-        "coexists with a system responder."]),
+      h("p", ["Turn it on under ", h("a", { href: "#/settings" }, "Settings → mDNS"),
+        ": enable discovery and set a publish zone (e.g. ", h("span.mono", "lan"),
+        "). It binds UDP 5353 and coexists with a system responder."]),
     ]))));
     return;
   }
@@ -81,7 +80,7 @@ function paint(body, data) {
   );
 
   body.appendChild(h("div.card", h("div.table-wrap",
-    h("table.table", [
+    h("table.tbl", [
       h("thead", h("tr", [
         h("th", "Host (.local)"),
         h("th", "Published as"),

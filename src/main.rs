@@ -289,12 +289,9 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    // ---- mDNS discovery (no-op unless enabled; port 5353 is unprivileged) ----
-    if config.mdns.enabled {
-        let registry = state.mdns();
-        let ttl = std::time::Duration::from_secs(config.mdns.ttl.unwrap_or(120).max(1) as u64);
-        tokio::spawn(dns::mdns::run(registry, ttl));
-    }
+    // ---- mDNS discovery supervisor (starts/stops with the runtime setting;
+    //      port 5353 is unprivileged) ----
+    tokio::spawn(dns::mdns::supervise(state.clone()));
 
     // ---- DHCP server + lease sweeper (no-ops when unconfigured) ----
     if !dhcp_sockets.is_empty() {

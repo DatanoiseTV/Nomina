@@ -284,10 +284,24 @@ pub struct Settings {
     /// database to be configured). Empty disables ASN blocking.
     #[serde(default)]
     pub blocked_asns: Vec<u32>,
+    /// Discover LAN hosts via mDNS and republish them under `mdns_zone`.
+    #[serde(default)]
+    pub mdns_enabled: bool,
+    /// Suffix discovered `*.local` hosts are published under (e.g. `lan`).
+    /// Empty disables publishing even when discovery is on.
+    #[serde(default)]
+    pub mdns_zone: String,
+    /// TTL (seconds) for republished mDNS records. Low by design.
+    #[serde(default = "default_mdns_ttl")]
+    pub mdns_ttl: u32,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_mdns_ttl() -> u32 {
+    120
 }
 
 impl Default for Settings {
@@ -321,6 +335,9 @@ impl Default for Settings {
             axfr_require_tsig: false,
             load_balance: LoadBalance::Off,
             blocked_asns: Vec::new(),
+            mdns_enabled: false,
+            mdns_zone: String::new(),
+            mdns_ttl: 120,
         }
     }
 }

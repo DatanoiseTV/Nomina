@@ -8,7 +8,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use hickory_proto::op::{Message, MessageType, OpCode, Query};
@@ -58,6 +57,11 @@ impl MdnsRegistry {
                 .collect(),
             _ => Vec::new(),
         }
+    }
+
+    /// Forget all discovered hosts (used when mDNS is disabled at runtime).
+    pub fn clear(&self) {
+        self.hosts.lock().clear();
     }
 
     /// Number of currently-fresh hosts.
@@ -179,9 +183,37 @@ fn bind_socket() -> std::io::Result<UdpSocket> {
     UdpSocket::from_std(sock.into())
 }
 
-/// Run the mDNS listener: learn hosts from multicast traffic and refresh with a
-/// periodic enumeration query. Returns (logs and stops) if the socket can't bind.
-pub async fn run(registry: Arc<MdnsRegistry>, ttl: Duration) {
+/// Supervise the mDNS listener against the runtime setting: start it when mDNS
+/// is enabled, stop it (and forget discovered hosts) when disabled. Polls the
+/// setting so toggling it in the UI takes effect within a couple of seconds with
+/// no restart. Spawned once at startup regardless of the initial setting.
+pub async fn supervise(state: crate::state::SharedState) {
+    let mut handle: Option<tokio::task::JoinHandle<()>> = None;
+    let mut tick = tokio::time::interval(Duration::from_secs(2));
+    loop {
+        tick.tick().await;
+        let enabled = state.mdns_enabled();
+        let running = handle.as_ref().is_some_and(|h| !h.is_finished());
+        match (running, enabled) {
+            (false, true) => {
+                handle = Some(tokio::spawn(run(state.clone())));
+            }
+            (true, false) => {
+                if let Some(h) = handle.take() {
+                    h.abort();
+                }
+                state.mdns().clear();
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Run the mDNS listener: learn hosts from multicast traffic and actively walk
+/// the DNS-SD chain to pull addresses onto the wire. Returns (logs and stops) if
+/// the socket can't bind. Records are inserted with the live configured TTL.
+pub async fn run(state: crate::state::SharedState) {
+    let registry = state.mdns();
     let sock = match bind_socket() {
         Ok(s) => s,
         Err(e) => {
@@ -204,6 +236,7 @@ pub async fn run(registry: Arc<MdnsRegistry>, ttl: Duration) {
                 Ok((n, src)) => {
                     let Ok(msg) = Message::from_vec(&buf[..n]) else { continue };
                     // Passive harvest: learn any *.local host addresses present.
+                    let ttl = Duration::from_secs(state.mdns_ttl() as u64);
                     for (host, ip) in hosts_from_message(&msg) {
                         registry.insert(&host, ip, ttl);
                     }

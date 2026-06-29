@@ -66,7 +66,8 @@ one static binary with the database and web UI embedded.
   optional lease → DNS auto-registration (A/AAAA + PTR). Off until configured.
 - **mDNS discovery** — optionally learn the `*.local` hosts Bonjour/Avahi
   announce on the LAN and republish them as low-TTL records under a zone you
-  choose, so non-mDNS clients can resolve them too. Off until configured.
+  choose, so non-mDNS clients can resolve them too. Enabled and scoped from the
+  web UI (Settings → mDNS); off by default.
 - **Observability** — dashboard (req/s, latency, cache hit-rate, per-outcome and
   DNSSEC-failure counts), a searchable request log, and Prometheus `/metrics`.
 - **Secure & private by default** — argon2 logins, server-side sessions, CSRF,
