@@ -182,6 +182,12 @@ pub async fn resolve_query(
             _ => None,
         }));
 
+    // Map layers for blocked traffic: client location (orange) + the blocked
+    // domain's own location, resolved in the background (red).
+    if matches!(stat, QueryOutcome::Blocked) {
+        state.stats.record_blocked_client(client);
+        state.note_blocked_domain(qname.to_string().trim_end_matches('.').to_string());
+    }
     if let Some(entry) = state.stats.record(
         state.query_log(),
         client,
@@ -297,6 +303,12 @@ fn record_stat(
     stat: QueryOutcome,
     out: &ResolveOutput,
 ) {
+    // Map layers for blocked traffic: the client's location (orange) and the
+    // location of the blocked domain itself, resolved in the background (red).
+    if matches!(stat, QueryOutcome::Blocked) {
+        state.stats.record_blocked_client(client);
+        state.note_blocked_domain(qname.to_string().trim_end_matches('.').to_string());
+    }
     if let Some(entry) = state.stats.record(
         state.query_log(),
         client,

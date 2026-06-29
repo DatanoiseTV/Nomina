@@ -150,6 +150,10 @@ pub struct Stats {
     latencies: Mutex<VecDeque<u64>>,
     /// Public resolved (answer) IPs -> count, for the geo map (bounded).
     resolved: Mutex<HashMap<IpAddr, u64>>,
+    /// Public IPs that blocked domains resolve to (background-resolved) -> count.
+    blocked_dest: Mutex<HashMap<IpAddr, u64>>,
+    /// Public client IPs that issued blocked requests -> count.
+    blocked_client: Mutex<HashMap<IpAddr, u64>>,
     /// Blocklist id -> number of blocks attributed to it.
     blocklist_hits: Mutex<HashMap<i64, u64>>,
     started: Instant,
@@ -167,6 +171,8 @@ impl Default for Stats {
             series: Mutex::new(Series::new()),
             latencies: Mutex::new(VecDeque::with_capacity(LATENCY_CAPACITY)),
             resolved: Mutex::new(HashMap::new()),
+            blocked_dest: Mutex::new(HashMap::new()),
+            blocked_client: Mutex::new(HashMap::new()),
             blocklist_hits: Mutex::new(HashMap::new()),
             started: Instant::now(),
             started_at: OffsetDateTime::now_utc()
@@ -343,6 +349,40 @@ impl Stats {
     /// Snapshot of resolved IPs and their counts (for `/api/map`).
     pub fn resolved_ips(&self) -> Vec<(IpAddr, u64)> {
         self.resolved.lock().iter().map(|(k, v)| (*k, *v)).collect()
+    }
+
+    /// Record a public IP that a blocked domain resolved to (background-resolved
+    /// for the map's blocked-destination layer). Non-global addresses ignored.
+    pub fn record_blocked_dest(&self, ip: IpAddr) {
+        if !is_global(ip) {
+            return;
+        }
+        let mut m = self.blocked_dest.lock();
+        if m.len() < RESOLVED_CAP || m.contains_key(&ip) {
+            *m.entry(ip).or_insert(0) += 1;
+        }
+    }
+
+    /// Snapshot of blocked-destination IPs and counts (for `/api/map`).
+    pub fn blocked_dest_ips(&self) -> Vec<(IpAddr, u64)> {
+        self.blocked_dest.lock().iter().map(|(k, v)| (*k, *v)).collect()
+    }
+
+    /// Record the public client IP of a blocked request (map's blocked-client
+    /// layer). Private/LAN clients are ignored — they don't geolocate.
+    pub fn record_blocked_client(&self, ip: IpAddr) {
+        if !is_global(ip) {
+            return;
+        }
+        let mut m = self.blocked_client.lock();
+        if m.len() < RESOLVED_CAP || m.contains_key(&ip) {
+            *m.entry(ip).or_insert(0) += 1;
+        }
+    }
+
+    /// Snapshot of blocked-client IPs and counts (for `/api/map`).
+    pub fn blocked_client_ips(&self) -> Vec<(IpAddr, u64)> {
+        self.blocked_client.lock().iter().map(|(k, v)| (*k, *v)).collect()
     }
 
     /// Attribute a block to the blocklist that supplied the domain.

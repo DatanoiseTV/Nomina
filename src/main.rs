@@ -239,6 +239,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Channel feeding the async query-log writer (bounded; drops under backpressure).
     let (qlog_tx, mut qlog_rx) = tokio::sync::mpsc::channel::<crate::stats::RecentQuery>(10_000);
+    // Channel feeding the blocked-domain geolocation worker (bounded; drops too).
+    let (blocked_tx, mut blocked_rx) = tokio::sync::mpsc::channel::<String>(4096);
 
     let state: SharedState = Arc::new(AppState::new(
         db,
@@ -249,7 +251,40 @@ async fn main() -> anyhow::Result<()> {
         filter,
         settings.clone(),
         qlog_tx,
+        blocked_tx,
     ));
+
+    // Background worker: resolve blocked domains (deduped, best-effort) just to
+    // geolocate where the ad/tracker servers live, for the map's red layer. Only
+    // runs when a GeoIP City database is loaded (otherwise the points are useless).
+    {
+        use hickory_proto::rr::{RData, RecordType};
+        let state = state.clone();
+        tokio::spawn(async move {
+            let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+            while let Some(domain) = blocked_rx.recv().await {
+                if !state.geo().has_geoip() {
+                    continue;
+                }
+                if seen.len() >= 8192 {
+                    seen.clear(); // periodic reset so long-lived processes re-confirm
+                }
+                if !seen.insert(domain.clone()) {
+                    continue; // already geolocated this domain
+                }
+                let Some(up) = state.upstream() else { continue };
+                let Ok(name) = hickory_proto::rr::Name::from_ascii(format!("{domain}.")) else {
+                    continue;
+                };
+                let r = up.resolve(&name, RecordType::A).await;
+                for rec in &r.answers {
+                    if let RData::A(a) = &rec.data {
+                        state.stats.record_blocked_dest(std::net::IpAddr::V4(a.0));
+                    }
+                }
+            }
+        });
+    }
 
     // Background query-log writer: batch-insert and cap the table size.
     {

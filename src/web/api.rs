@@ -184,11 +184,39 @@ pub async fn map_points(State(state): State<SharedState>, _auth: Authed) -> Resp
         .collect();
     asns.sort_by(|a, b| b["count"].as_u64().cmp(&a["count"].as_u64()));
     asns.truncate(20);
+
+    // Geolocate a list of (ip, count) into clustered points (same scheme as above).
+    let geo_points = |ips: Vec<(std::net::IpAddr, u64)>| -> Vec<Value> {
+        let mut m: HashMap<(i64, i64), (f64, f64, String, String, u64)> = HashMap::new();
+        for (ip, count) in ips {
+            let g = geo.lookup(ip);
+            let (Some(lat), Some(lon)) = (g.lat, g.lon) else { continue };
+            let key = ((lat * 20.0).round() as i64, (lon * 20.0).round() as i64);
+            let e = m.entry(key).or_insert((
+                lat,
+                lon,
+                g.city.clone().unwrap_or_default(),
+                g.country.clone().unwrap_or_default(),
+                0,
+            ));
+            e.4 += count;
+        }
+        m.values()
+            .map(|(lat, lon, city, country, count)| {
+                json!({ "lat": lat, "lon": lon, "city": city, "country": country, "count": count })
+            })
+            .collect()
+    };
+    let blocked = geo_points(state.stats.blocked_dest_ips());
+    let blocked_clients = geo_points(state.stats.blocked_client_ips());
+
     ok_json(json!({
         "geoip": geo.has_geoip(),
         "asn": geo.has_asn(),
         "points": points,
         "asns": asns,
+        "blocked": blocked,
+        "blocked_clients": blocked_clients,
     }))
 }
 

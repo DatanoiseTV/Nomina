@@ -44,6 +44,8 @@ pub struct AppState {
     rr_counter: AtomicU64,
     throttle: Mutex<LoginThrottle>,
     qlog_tx: tokio::sync::mpsc::Sender<crate::stats::RecentQuery>,
+    /// Blocked domains queued for background resolution (map's blocked-dest layer).
+    blocked_tx: tokio::sync::mpsc::Sender<String>,
 }
 
 impl AppState {
@@ -57,6 +59,7 @@ impl AppState {
         filter: FilterSet,
         settings: Settings,
         qlog_tx: tokio::sync::mpsc::Sender<crate::stats::RecentQuery>,
+        blocked_tx: tokio::sync::mpsc::Sender<String>,
     ) -> Self {
         let geo = Arc::new(GeoDb::load(
             config.geo.geoip_db.as_deref(),
@@ -81,7 +84,14 @@ impl AppState {
             rr_counter: AtomicU64::new(0),
             throttle: Mutex::new(LoginThrottle::default()),
             qlog_tx,
+            blocked_tx,
         }
+    }
+
+    /// Queue a blocked domain for background resolution (for the map's
+    /// blocked-destination layer). Dropped silently if the worker is backed up.
+    pub fn note_blocked_domain(&self, domain: String) {
+        let _ = self.blocked_tx.try_send(domain);
     }
 
     /// Queue a query-log entry for async persistence. Drops the entry (rather

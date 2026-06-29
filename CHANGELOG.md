@@ -7,6 +7,12 @@ All notable changes to Nomina are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Blocked traffic on the Map** — two new toggleable layers beside the resolved
+  points: **blocked destinations** (red) — where blocked domains are hosted,
+  found by resolving each blocked domain once in the background purely to
+  geolocate the ad/tracker server — and **blocked clients** (orange) — the
+  location of public clients whose requests were blocked. Both need a GeoIP City
+  database; LAN/private clients are not plotted.
 - **More configuration in the web UI** — Settings now manages the DNS listeners
   (plain/DoT/DoH/DoQ/DoH3 addresses, DoH path, TCP timeout), TLS (hostname,
   self-signed, ACME domains/contact/staging, cert/key paths), the GeoIP database

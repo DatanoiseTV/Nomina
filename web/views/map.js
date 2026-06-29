@@ -81,21 +81,38 @@ export async function renderMap(root, { registerCleanup }) {
       maxZoom: 18, attribution: "© OpenStreetMap contributors",
     }).addTo(map);
 
-    const maxCount = Math.max(1, ...data.points.map((p) => p.count));
-    for (const p of data.points) {
-      const radius = 5 + 16 * Math.sqrt(p.count / maxCount);
-      L.circleMarker([p.lat, p.lon], {
-        radius, color: "#818cf8", weight: 1, fillColor: "#818cf8", fillOpacity: 0.45,
-      })
-        .addTo(map)
-        .bindPopup(`<b>${p.city || "Unknown"}${p.country ? ", " + p.country : ""}</b><br>${p.count} hit(s)`);
-    }
+    // Marker scale is shared across all layers so sizes are comparable.
+    const all = [...(data.points || []), ...(data.blocked || []), ...(data.blocked_clients || [])];
+    const maxCount = Math.max(1, ...all.map((p) => p.count));
+    const layer = (pts, color, label) => {
+      const g = L.layerGroup();
+      for (const p of pts || []) {
+        const radius = 5 + 16 * Math.sqrt(p.count / maxCount);
+        L.circleMarker([p.lat, p.lon], {
+          radius, color, weight: 1, fillColor: color, fillOpacity: 0.45,
+        })
+          .bindPopup(`<b>${label}</b><br>${p.city || "Unknown"}${p.country ? ", " + p.country : ""}<br>${p.count} hit(s)`)
+          .addTo(g);
+      }
+      return g;
+    };
+    const resolved = layer(data.points, "#818cf8", "Resolved").addTo(map);
+    const blocked = layer(data.blocked, "#ef4444", "Blocked destination").addTo(map);
+    const blockedClients = layer(data.blocked_clients, "#f59e0b", "Blocked client").addTo(map);
+    L.control.layers(null, {
+      "Resolved": resolved,
+      "Blocked destination": blocked,
+      "Blocked client": blockedClients,
+    }, { collapsed: false }).addTo(map);
+
     setTimeout(() => map.invalidateSize(), 120);
     if (registerCleanup) registerCleanup(() => { try { map.remove(); } catch (_) {} });
 
-    const hits = data.points.reduce((a, p) => a + p.count, 0);
+    const hits = (data.points || []).reduce((a, p) => a + p.count, 0);
+    const bd = (data.blocked || []).reduce((a, p) => a + p.count, 0);
     sideCol.appendChild(h("div.inline-note", { style: "margin-top:8px" },
-      `${data.points.length} location(s) · ${hits} hit(s). Tiles © OpenStreetMap.`));
+      `${data.points.length} resolved location(s) · ${hits} hit(s)` +
+      (bd ? ` · ${bd} blocked` : "") + `. Tiles © OpenStreetMap.`));
   } else {
     root.appendChild(sideCol);
   }
