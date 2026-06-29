@@ -85,31 +85,58 @@ pub fn bind(config: &Config, scope_interfaces: &[String]) -> anyhow::Result<Dhcp
     Ok(DhcpSockets { v4, v6 })
 }
 
-/// Bind a broadcast-capable DHCPv4 socket pinned to a specific network interface
-/// (Linux SO_BINDTODEVICE). Returns the socket and the interface's IPv4 address
-/// (used for subnet-based scope selection). Interface binding is Linux-only;
-/// elsewhere this returns an error and the interface scope falls back to relay /
-/// first-scope selection on the global listener.
-fn bind_v4_device(name: &str) -> anyhow::Result<(UdpSocket, Option<Ipv4Addr>)> {
+/// Bind a broadcast-capable DHCPv4 socket pinned to a network interface (Linux
+/// SO_BINDTODEVICE). `target` is either an interface name (`eth0.20`) or an IPv4
+/// address on that interface (`192.168.20.1`) — an IP is resolved to its owning
+/// interface so binding stays broadcast-correct (a socket bound to a plain
+/// unicast IP would not receive broadcast DISCOVERs). Returns the socket and the
+/// interface's IPv4 address (for subnet-based scope selection).
+///
+/// Interface binding is Linux-only; elsewhere this returns an error and the
+/// scope falls back to relay / first-scope selection on the global listener.
+fn bind_v4_device(target: &str) -> anyhow::Result<(UdpSocket, Option<Ipv4Addr>)> {
     #[cfg(target_os = "linux")]
     {
+        let (ifname, addr) = resolve_bind_target(target)
+            .ok_or_else(|| anyhow::anyhow!("no interface matches '{target}'"))?;
         let sock = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
         sock.set_reuse_address(true)?;
         sock.set_broadcast(true)?;
         sock.set_nonblocking(true)?;
-        sock.bind_device(Some(name.as_bytes()))?;
+        sock.bind_device(Some(ifname.as_bytes()))?;
         sock.bind(&SocketAddr::from((Ipv4Addr::UNSPECIFIED, V4_RELAY_PORT)).into())?;
         let udp = UdpSocket::from_std(sock.into())?;
-        Ok((udp, interface_ipv4(name)))
+        Ok((udp, addr))
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = name;
+        let _ = target;
         anyhow::bail!("per-interface DHCP binding requires Linux (SO_BINDTODEVICE)")
     }
 }
 
+/// Resolve a bind target (interface name or IPv4 address) to (interface name,
+/// interface address). An IP is matched to the interface that owns it.
+#[cfg(target_os = "linux")]
+fn resolve_bind_target(target: &str) -> Option<(String, Option<Ipv4Addr>)> {
+    use nix::ifaddrs::getifaddrs;
+    if let Ok(ip) = target.parse::<Ipv4Addr>() {
+        let iter = getifaddrs().ok()?;
+        for ifa in iter {
+            if let Some(sin) = ifa.address.and_then(|a| a.as_sockaddr_in().copied()) {
+                if sin.ip() == ip {
+                    return Some((ifa.interface_name, Some(ip)));
+                }
+            }
+        }
+        None
+    } else {
+        Some((target.to_string(), interface_ipv4(target)))
+    }
+}
+
 /// The first IPv4 address assigned to interface `name`, if any.
+#[cfg(target_os = "linux")]
 fn interface_ipv4(name: &str) -> Option<Ipv4Addr> {
     use nix::ifaddrs::getifaddrs;
     let iter = getifaddrs().ok()?;

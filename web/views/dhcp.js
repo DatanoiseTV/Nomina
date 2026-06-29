@@ -223,8 +223,15 @@ async function openScopeDialog({ scope, onSaved }) {
   const lease = h("input", { type: "number", value: scope ? scope.lease_secs : 86400, min: 60 });
   const serverId = h("input", { type: "text", value: scope && scope.server_id ? scope.server_id : "", placeholder: "192.168.1.1 (this server)" });
   const ifaceListId = "dhcp-iface-list";
-  const ifaceList = h("datalist", { id: ifaceListId },
-    ifaces.map((i) => h("option", { value: i.name }, i.addresses && i.addresses.length ? i.addresses.join(", ") : "")));
+  // Offer both interface names and their IPv4 addresses as pick options.
+  const ifaceOpts = [];
+  for (const i of ifaces) {
+    ifaceOpts.push(h("option", { value: i.name }, (i.addresses || []).join(", ")));
+    for (const a of i.addresses || []) {
+      if (a.includes(".")) ifaceOpts.push(h("option", { value: a }, i.name));
+    }
+  }
+  const ifaceList = h("datalist", { id: ifaceListId }, ifaceOpts);
   const iface = h("input", { type: "text", list: ifaceListId,
     value: scope && scope.interface ? scope.interface : "", placeholder: "any (relay / single LAN)" });
   const enabled = h("input", { type: "checkbox", checked: scope ? scope.enabled : true });
@@ -249,8 +256,8 @@ async function openScopeDialog({ scope, onSaved }) {
     ]),
     h("div.field", [h("label", "Server identifier (IPv4)"), serverId,
       h("div.hint", "This server's address on the subnet — sent as option 54. Required for IPv4 serving.")]),
-    h("div.field", [h("label", "Interface"), iface, ifaceList,
-      h("div.hint", "Bind this scope to a network interface for directly-connected VLANs (e.g. eth0.20). Leave empty for relayed clients or a single LAN. Changing this needs a restart. Linux only.")]),
+    h("div.field", [h("label", "Interface / IP"), iface, ifaceList,
+      h("div.hint", "Bind this scope to a network interface for directly-connected VLANs — an interface name (eth0.20) or an IP on it (192.168.20.1), which is resolved to its interface. Leave empty for relayed clients or a single LAN. Changing this needs a restart. Linux only.")]),
     h("div.field", [h("label.switch", [enabled, h("span.track"), h("span", "Scope enabled")])]),
     h("div.field", [h("label.switch", [dnsReg, h("span.track"), h("span", "Register leases in DNS")])]),
     h("div.field", [h("label", "DNS zone"), dnsZone,
