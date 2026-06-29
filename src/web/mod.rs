@@ -288,6 +288,30 @@ pub async fn serve_plain(listener: TcpListener, app: Router) -> anyhow::Result<(
     Ok(())
 }
 
+/// Serve one established TLS connection with hyper (HTTP/1.1 + h2), injecting
+/// the peer address so `ConnectInfo<SocketAddr>` (split-horizon DoH) works.
+async fn serve_hyper<S>(tls_stream: S, peer: SocketAddr, app: Router)
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let io = TokioIo::new(tls_stream);
+    let service = hyper::service::service_fn(move |req: Request<Incoming>| {
+        let mut app = app.clone();
+        async move {
+            let mut req = req.map(Body::new);
+            req.extensions_mut().insert(axum::extract::ConnectInfo(peer));
+            let res: Result<Response, Infallible> = app.call(req).await;
+            res
+        }
+    });
+    if let Err(e) = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new())
+        .serve_connection_with_upgrades(io, service)
+        .await
+    {
+        tracing::debug!("web connection error: {e}");
+    }
+}
+
 /// Run the web server over TLS using the shared rustls config.
 pub async fn serve_tls(
     listener: TcpListener,
@@ -307,30 +331,74 @@ pub async fn serve_tls(
         let acceptor = acceptor.clone();
         let app = app.clone();
         tokio::spawn(async move {
-            let tls_stream = match acceptor.accept(stream).await {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::debug!("TLS handshake failed: {e}");
-                    return;
-                }
-            };
-            let io = TokioIo::new(tls_stream);
-            let service = hyper::service::service_fn(move |req: Request<Incoming>| {
-                let mut app = app.clone();
-                async move {
-                    // Inject the peer address so ConnectInfo<SocketAddr> works.
-                    let mut req = req.map(Body::new);
-                    req.extensions_mut()
-                        .insert(axum::extract::ConnectInfo(peer));
-                    let res: Result<Response, Infallible> = app.call(req).await;
-                    res
-                }
-            });
-            if let Err(e) = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new())
-                .serve_connection_with_upgrades(io, service)
-                .await
-            {
-                tracing::debug!("web connection error: {e}");
+            match acceptor.accept(stream).await {
+                Ok(s) => serve_hyper(s, peer, app).await,
+                Err(e) => tracing::debug!("TLS handshake failed: {e}"),
+            }
+        });
+    }
+}
+
+/// Run the web server over TLS with automatic Let's Encrypt certificates
+/// (ACME TLS-ALPN-01). Requires the `domains` to resolve publicly to this host
+/// and the listener to be reachable on the public TLS port (typically 443).
+/// Certificates and the ACME account are cached under `cache_dir`.
+pub async fn serve_tls_acme(
+    listener: TcpListener,
+    app: Router,
+    domains: Vec<String>,
+    contact: Vec<String>,
+    staging: bool,
+    cache_dir: std::path::PathBuf,
+) -> anyhow::Result<()> {
+    use futures_util::StreamExt;
+    use rustls_acme::AcmeConfig;
+    use rustls_acme::caches::DirCache;
+    use tokio_util::compat::{FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt};
+
+    let mut state = AcmeConfig::new(domains)
+        .contact(contact)
+        .cache(DirCache::new(cache_dir))
+        .directory_lets_encrypt(!staging) // production unless staging
+        .state();
+    // Low-level acceptor (kept over the high-level `incoming()` so we retain the
+    // peer address for `ConnectInfo`).
+    #[allow(deprecated)]
+    let acceptor = state.acceptor();
+    let rustls_config = state.default_rustls_config();
+
+    // Drive the ACME order/renewal state machine.
+    tokio::spawn(async move {
+        loop {
+            match state.next().await {
+                Some(Ok(ok)) => tracing::info!("ACME: {ok:?}"),
+                Some(Err(e)) => tracing::warn!("ACME error: {e}"),
+                None => break,
+            }
+        }
+    });
+
+    loop {
+        let (tcp, peer) = match listener.accept().await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("web accept error: {e}");
+                continue;
+            }
+        };
+        let accept = acceptor.clone();
+        let cfg = rustls_config.clone();
+        let app = app.clone();
+        tokio::spawn(async move {
+            // rustls-acme speaks futures-io; bridge to/from tokio-io with compat.
+            match accept.accept(tcp.compat()).await {
+                // A TLS-ALPN-01 challenge handshake — handled internally.
+                Ok(None) => {}
+                Ok(Some(start)) => match start.into_stream(cfg).await {
+                    Ok(tls) => serve_hyper(tls.compat(), peer, app).await,
+                    Err(e) => tracing::debug!("ACME TLS handshake failed: {e}"),
+                },
+                Err(e) => tracing::debug!("ACME accept failed: {e}"),
             }
         });
     }

@@ -109,6 +109,17 @@ pub struct TlsConfig {
     pub hostname: String,
     /// Auto-generate a self-signed certificate when none is configured.
     pub auto_self_signed: bool,
+    /// Obtain a real certificate automatically from Let's Encrypt via ACME
+    /// TLS-ALPN-01 (for the web UI / DoH). Requires `web.tls = true`, the
+    /// domain(s) to resolve publicly to this host, and the TLS port reachable
+    /// from the internet (typically 443). Overrides the self-signed cert.
+    pub acme: bool,
+    /// Domains to request the certificate for. Defaults to `[hostname]`.
+    pub acme_domains: Vec<String>,
+    /// Contact email for the ACME account (recommended).
+    pub acme_contact: Option<String>,
+    /// Use the Let's Encrypt staging environment (for testing; untrusted certs).
+    pub acme_staging: bool,
 }
 
 impl Default for Config {
@@ -159,6 +170,10 @@ impl Default for TlsConfig {
             key_path: None,
             hostname: "nomina.local".into(),
             auto_self_signed: true,
+            acme: false,
+            acme_domains: Vec::new(),
+            acme_contact: None,
+            acme_staging: false,
         }
     }
 }

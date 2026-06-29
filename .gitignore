@@ -12,3 +12,6 @@ __pycache__/
 
 # GeoIP databases (user-supplied; not redistributed)
 /geo/
+
+# local run config
+/nomina.toml

@@ -7,6 +7,11 @@ All notable changes to Nomina are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Automatic HTTPS (ACME / Let's Encrypt)** — set `tls.acme = true` to obtain and
+  renew a real certificate for the web UI via ACME TLS-ALPN-01 (no extra ports,
+  no manual cert handling). Configurable domains/contact and a staging toggle;
+  certs cache under `data_dir/acme`. Requires the domain(s) to resolve to the
+  host and the TLS port reachable publicly.
 - **Map view** — plots the geolocated public IPs Nomina has resolved on an
   interactive world map (vendored Leaflet + OpenStreetMap tiles; no API key).
   Backed by `/api/map` and the GeoIP City database. DB-IP's free, account-less

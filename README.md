@@ -125,6 +125,10 @@ the sockets, then drops privileges (or grant `CAP_NET_BIND_SERVICE` under
 systemd). The full config reference is in
 [`nomina.example.toml`](nomina.example.toml).
 
+For a publicly-reachable instance, set `tls.acme = true` to get and auto-renew a
+real **Let's Encrypt** certificate for the web UI (ACME TLS-ALPN-01) — no manual
+certs. Otherwise a self-signed cert is generated under `data_dir`.
+
 ## Architecture
 
 The DNS hot path reads an in-memory store (zones/records/views) and filter set,

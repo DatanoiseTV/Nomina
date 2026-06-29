@@ -49,6 +49,13 @@ allow_networks = []    # e.g. ["192.168.0.0/16", "10.0.0.0/8"]
 # key_path  = "/etc/nomina/key.pem"
 hostname = "nomina.local"
 auto_self_signed = true
+# Automatic Let's Encrypt certificates via ACME TLS-ALPN-01. Requires
+# `web.tls = true`, the domain(s) to resolve publicly to this host, and the TLS
+# port reachable from the internet (typically 443). Certs cache in data_dir/acme.
+# acme = true
+# acme_domains = ["dns.example.com"]   # defaults to [hostname] if empty
+# acme_contact = "admin@example.com"
+# acme_staging = false                 # true = Let's Encrypt staging (testing)
 
 [privileges]
 # Bind privileged ports as root, then drop to this user/group. Only effective

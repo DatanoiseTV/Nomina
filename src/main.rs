@@ -333,17 +333,45 @@ async fn main() -> anyhow::Result<()> {
         Some(listener) => {
             let app = web::router(state.clone());
             let web_addr = config.web.listen;
+            let use_acme = config.tls.acme && config.web.tls;
             let scheme = if config.web.tls { "https" } else { "http" };
-            tracing::info!("management interface on {scheme}://{web_addr}");
-            Some(tokio::spawn(async move {
-                let result = match web_tls {
-                    Some(cfg) => web::serve_tls(listener, app, cfg).await,
-                    None => web::serve_plain(listener, app).await,
+            if use_acme {
+                let domains = if config.tls.acme_domains.is_empty() {
+                    vec![config.tls.hostname.clone()]
+                } else {
+                    config.tls.acme_domains.clone()
                 };
-                if let Err(e) = result {
-                    tracing::error!("web server stopped: {e}");
-                }
-            }))
+                let contact: Vec<String> = config
+                    .tls
+                    .acme_contact
+                    .iter()
+                    .map(|e| format!("mailto:{e}"))
+                    .collect();
+                let staging = config.tls.acme_staging;
+                let cache_dir = config.data_dir.join("acme");
+                tracing::info!(
+                    "management interface on https://{web_addr} (ACME for {domains:?}{})",
+                    if staging { ", staging" } else { "" }
+                );
+                Some(tokio::spawn(async move {
+                    if let Err(e) =
+                        web::serve_tls_acme(listener, app, domains, contact, staging, cache_dir).await
+                    {
+                        tracing::error!("web server stopped: {e}");
+                    }
+                }))
+            } else {
+                tracing::info!("management interface on {scheme}://{web_addr}");
+                Some(tokio::spawn(async move {
+                    let result = match web_tls {
+                        Some(cfg) => web::serve_tls(listener, app, cfg).await,
+                        None => web::serve_plain(listener, app).await,
+                    };
+                    if let Err(e) = result {
+                        tracing::error!("web server stopped: {e}");
+                    }
+                }))
+            }
         }
     };
 

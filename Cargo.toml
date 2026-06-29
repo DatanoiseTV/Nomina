@@ -55,6 +55,8 @@ tower-service = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unicode-script = "0.5"
+rustls-acme = { version = "0.15.3", default-features = false, features = ["ring", "tokio", "webpki-roots"] }
+tokio-util = { version = "0.7.18", features = ["compat"] }
 
 # Release profile: optimize for size + speed, but keep unwinding panics.
 # Nomina parses untrusted DNS bytes via hickory; `panic = "abort"` would let a
