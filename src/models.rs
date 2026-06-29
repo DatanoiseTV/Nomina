@@ -841,6 +841,17 @@ pub fn soa_rname(admin: &str) -> Result<Name, String> {
     Ok(name)
 }
 
+/// One entry in the management audit trail.
+#[derive(Debug, Clone, Serialize)]
+pub struct AuditEntry {
+    pub id: i64,
+    pub at: String,
+    pub username: String,
+    pub action: String,
+    pub status: i64,
+    pub ip: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

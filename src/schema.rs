@@ -224,3 +224,14 @@ diesel::table! {
         created_at -> Text,
     }
 }
+
+diesel::table! {
+    audit_log (id) {
+        id -> BigInt,
+        at -> Text,
+        username -> Text,
+        action -> Text,
+        status -> BigInt,
+        ip -> Text,
+    }
+}

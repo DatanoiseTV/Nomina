@@ -12,7 +12,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::{ConnectInfo, Request as ExtractRequest, State};
-use axum::http::{HeaderName, HeaderValue, Request, StatusCode, Uri, header};
+use axum::http::{HeaderName, HeaderValue, Method, Request, StatusCode, Uri, header};
 use axum::middleware::{Next, from_fn_with_state};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
@@ -44,8 +44,10 @@ const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsa
 
 /// Build the full application router.
 pub fn router(state: SharedState) -> Router {
+    let audit_state = state.clone();
     let api = Router::new()
         .route("/api/health", get(api::health))
+        .route("/api/audit", get(api::list_audit))
         .route("/metrics", get(api::metrics))
         .route("/api/status", get(api::status))
         .route("/api/stats", get(api::stats))
@@ -204,7 +206,8 @@ pub fn router(state: SharedState) -> Router {
             "referrer-policy",
             "strict-origin-when-cross-origin",
         ))
-        .layer(TraceLayer::new_for_http());
+        .layer(TraceLayer::new_for_http())
+        .layer(from_fn_with_state(audit_state, audit_mw));
 
     if allow.is_empty() {
         app
@@ -231,6 +234,41 @@ async fn ip_guard(
         tracing::warn!(client = %peer.ip(), "rejected management request (not in allow-list)");
         (StatusCode::FORBIDDEN, "forbidden").into_response()
     }
+}
+
+/// Record mutating management actions (who, what, when, from where) to the audit
+/// log. Runs after the handler so it can capture the response status; resolving
+/// the user and writing the row happen off the response path.
+async fn audit_mw(
+    State(state): State<SharedState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    req: ExtractRequest,
+    next: Next,
+) -> Response {
+    let method = req.method().clone();
+    let path = req.uri().path().to_string();
+    let headers = req.headers().clone();
+    let resp = next.run(req).await;
+    let mutating = matches!(
+        method,
+        Method::POST | Method::PUT | Method::PATCH | Method::DELETE
+    );
+    if mutating && resp.status().is_success() && path.starts_with("/api/") {
+        let status = resp.status().as_u16() as i64;
+        let ip = peer.ip().to_string();
+        let action = format!("{method} {path}");
+        tokio::spawn(async move {
+            let username = auth::resolve_session(&state, &headers)
+                .await
+                .map(|a| a.user.username)
+                .unwrap_or_else(|_| "?".into());
+            let _ = state
+                .db
+                .run(move |c| crate::db::Db::insert_audit(c, &username, &action, status, &ip))
+                .await;
+        });
+    }
+    resp
 }
 
 fn security_header(name: &'static str, value: &'static str) -> SetResponseHeaderLayer<HeaderValue> {

@@ -1197,6 +1197,62 @@ impl Db {
         conn.batch_execute(&format!("VACUUM INTO '{escaped}'"))
     }
 
+    // ----- audit log -------------------------------------------------------
+
+    /// Record a mutating management action, then trim the log to the most recent
+    /// 10 000 entries.
+    pub fn insert_audit(
+        conn: &mut SqliteConnection,
+        username: &str,
+        action: &str,
+        status: i64,
+        ip: &str,
+    ) -> QueryResult<()> {
+        use diesel::connection::SimpleConnection;
+        diesel::insert_into(audit_log::table)
+            .values((
+                audit_log::at.eq(now()),
+                audit_log::username.eq(username),
+                audit_log::action.eq(action),
+                audit_log::status.eq(status),
+                audit_log::ip.eq(ip),
+            ))
+            .execute(conn)?;
+        conn.batch_execute(
+            "DELETE FROM audit_log WHERE id <= (SELECT MAX(id) FROM audit_log) - 10000",
+        )
+        .ok();
+        Ok(())
+    }
+
+    /// The most recent audit entries (newest first).
+    pub fn list_audit(conn: &mut SqliteConnection, limit: i64) -> QueryResult<Vec<AuditEntry>> {
+        audit_log::table
+            .order(audit_log::id.desc())
+            .limit(limit)
+            .select((
+                audit_log::id,
+                audit_log::at,
+                audit_log::username,
+                audit_log::action,
+                audit_log::status,
+                audit_log::ip,
+            ))
+            .load::<(i64, String, String, String, i64, String)>(conn)?
+            .into_iter()
+            .map(|(id, at, username, action, status, ip)| {
+                Ok(AuditEntry {
+                    id,
+                    at,
+                    username,
+                    action,
+                    status,
+                    ip,
+                })
+            })
+            .collect()
+    }
+
     // ----- query log -------------------------------------------------------
 
     /// Batch-insert query-log entries in one transaction.

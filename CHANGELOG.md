@@ -7,6 +7,17 @@ All notable changes to Nomina are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Production deployment** — graceful shutdown on SIGTERM (not just SIGINT) with
+  a WAL checkpoint, so systemd/Docker/Kubernetes stop cleanly; a GitHub Actions
+  CI pipeline (fmt, clippy, test, release build, cargo audit); a multi-stage
+  Dockerfile + docker-compose; and a hardened systemd unit (`deploy/nomina.service`).
+- **Audit log** — mutating management actions (create/update/delete) are recorded
+  with user, action, status, source IP, and timestamp, viewable under System →
+  Audit log and capped at the most recent 10 000 entries.
+- **Scheduled blocklist auto-refresh** — re-download enabled blocklists every N
+  hours in the background (Settings → Blocking; 0 = off).
+- **Database backup** — download a consistent SQLite snapshot of zones, leases,
+  rules, and settings from Settings → Backup (`/api/backup`).
 - **Click a map node to see its hosts/CIDRs** — each marker popup now lists the
   IP addresses behind that location cluster, each with its network (CIDR, from
   the ASN/GeoIP database) and hit count (top 30 by hits).

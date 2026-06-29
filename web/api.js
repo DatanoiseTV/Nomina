@@ -104,6 +104,7 @@ export const api = {
   mapPoints: () => request("GET", "/api/map"),
   mdns: () => request("GET", "/api/mdns"),
   interfaces: () => request("GET", "/api/interfaces"),
+  audit: () => request("GET", "/api/audit"),
   clearStats: () => request("POST", "/api/stats/clear"),
 
   // ---- Views ----

@@ -11,6 +11,7 @@ import { renderSecondary } from "./views/secondary.js";
 import { renderViews } from "./views/views.js";
 import { renderSettings } from "./views/settings.js";
 import { renderAccount } from "./views/account.js";
+import { renderAudit } from "./views/audit.js";
 import { renderBlocklists } from "./views/blocklists.js";
 import { renderRules } from "./views/rules.js";
 import { renderRewrites } from "./views/rewrites.js";
@@ -76,6 +77,7 @@ const routes = [
   { re: /^\/dhcp$/, view: renderDhcp, nav: "dhcp", title: "DHCP" },
   { re: /^\/settings$/, view: renderSettings, nav: "settings", title: "Settings" },
   { re: /^\/account$/, view: renderAccount, nav: "account", title: "Account" },
+  { re: /^\/audit$/, view: renderAudit, nav: "audit", title: "Audit log" },
 ];
 
 const NAV_ITEMS = [
@@ -100,6 +102,7 @@ const NAV_ITEMS = [
   { id: "discovered", label: "mDNS", href: "#/discovered", icon: "radio" },
   { section: "System" },
   { id: "settings", label: "Settings", href: "#/settings", icon: "settings" },
+  { id: "audit", label: "Audit log", href: "#/audit", icon: "inbox" },
   { id: "account", label: "Account", href: "#/account", icon: "account" },
 ];
 

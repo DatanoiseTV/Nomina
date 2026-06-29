@@ -313,6 +313,12 @@ pub async fn list_interfaces(_auth: Authed) -> Response {
     ok_json(json!({ "interfaces": list }))
 }
 
+/// The management audit trail: recent mutating actions (newest first).
+pub async fn list_audit(State(state): State<SharedState>, _auth: Authed) -> ApiResult<Response> {
+    let entries = state.db.run(move |c| Db::list_audit(c, 500)).await?;
+    Ok(ok_json(json!({ "audit": entries })))
+}
+
 /// Download a consistent snapshot of the database (zones, leases, settings, …)
 /// as a SQLite file, via `VACUUM INTO` to a temp file in the data directory.
 pub async fn backup_db(State(state): State<SharedState>, _auth: Authed) -> ApiResult<Response> {
