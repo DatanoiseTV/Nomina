@@ -174,7 +174,13 @@ impl AppState {
     /// Configured mDNS publish zone, normalized (trimmed, lowercased). `None`
     /// when unset, so publishing is effectively off.
     pub fn mdns_zone(&self) -> Option<String> {
-        let z = self.settings.read().mdns_zone.trim().trim_end_matches('.').to_ascii_lowercase();
+        let z = self
+            .settings
+            .read()
+            .mdns_zone
+            .trim()
+            .trim_end_matches('.')
+            .to_ascii_lowercase();
         if z.is_empty() { None } else { Some(z) }
     }
 

@@ -72,7 +72,14 @@ pub fn bind(config: &Config, scope_interfaces: &[String]) -> anyhow::Result<Dhcp
         match bind_v4_device(name) {
             Ok((sock, addr)) => {
                 tracing::info!("DHCPv4 bound to interface {name}");
-                v4.push((bind_all, Some(RecvIface { name: name.clone(), addr }), sock));
+                v4.push((
+                    bind_all,
+                    Some(RecvIface {
+                        name: name.clone(),
+                        addr,
+                    }),
+                    sock,
+                ));
             }
             Err(e) => tracing::warn!("DHCPv4: cannot bind to interface {name}: {e}"),
         }
@@ -1216,18 +1223,34 @@ mod tests {
         let scopes = vec![a, b];
 
         // Request arriving on eth0.20 selects the scope pinned to it.
-        let ic = RecvIface { name: "eth0.20".into(), addr: None };
+        let ic = RecvIface {
+            name: "eth0.20".into(),
+            addr: None,
+        };
         let sel = select_v4_scope(&scopes, Ipv4Addr::UNSPECIFIED, Some(&ic)).unwrap();
         assert_eq!(sel.id, 2);
 
         // An interface with no explicit pin falls back to subnet-by-address.
-        let scopes2: Vec<_> = scopes.iter().cloned().map(|mut s| { s.interface = None; s }).collect();
-        let ic2 = RecvIface { name: "br0".into(), addr: Some(Ipv4Addr::new(192, 168, 10, 1)) };
+        let scopes2: Vec<_> = scopes
+            .iter()
+            .cloned()
+            .map(|mut s| {
+                s.interface = None;
+                s
+            })
+            .collect();
+        let ic2 = RecvIface {
+            name: "br0".into(),
+            addr: Some(Ipv4Addr::new(192, 168, 10, 1)),
+        };
         let sel2 = select_v4_scope(&scopes2, Ipv4Addr::UNSPECIFIED, Some(&ic2)).unwrap();
         assert_eq!(sel2.id, 1);
 
         // Relay still wins over interface.
-        let ic3 = RecvIface { name: "eth0.10".into(), addr: None };
+        let ic3 = RecvIface {
+            name: "eth0.10".into(),
+            addr: None,
+        };
         let sel3 = select_v4_scope(&scopes, Ipv4Addr::new(192, 168, 20, 1), Some(&ic3)).unwrap();
         assert_eq!(sel3.id, 2);
     }

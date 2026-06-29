@@ -76,7 +76,15 @@ pub async fn resolve_query(
             authoritative: true,
             recursion_available,
         };
-        record_stat(state, client, None, qname, qtype, QueryOutcome::Authoritative, &out);
+        record_stat(
+            state,
+            client,
+            None,
+            qname,
+            qtype,
+            QueryOutcome::Authoritative,
+            &out,
+        );
         state.stats.record_latency(started.elapsed());
         return out;
     }
@@ -276,7 +284,9 @@ fn mdns_answer(state: &AppState, qname: &Name, qtype: RecordType) -> Option<Vec<
                     .into_iter()
                     .map(|ip| match ip {
                         IpAddr::V4(v4) => Record::from_rdata(qname.clone(), ttl, RData::A(A(v4))),
-                        IpAddr::V6(v6) => Record::from_rdata(qname.clone(), ttl, RData::AAAA(AAAA(v6))),
+                        IpAddr::V6(v6) => {
+                            Record::from_rdata(qname.clone(), ttl, RData::AAAA(AAAA(v6)))
+                        }
                     })
                     .collect();
                 if !answers.is_empty() {

@@ -90,7 +90,11 @@ impl MdnsRegistry {
             .iter()
             .filter(|(_, (_, exp))| *exp > now)
             .map(|(host, (ips, exp))| {
-                (host.clone(), ips.clone(), exp.saturating_duration_since(now).as_secs())
+                (
+                    host.clone(),
+                    ips.clone(),
+                    exp.saturating_duration_since(now).as_secs(),
+                )
             })
             .collect();
         out.sort_by(|a, b| a.0.cmp(&b.0));
@@ -185,7 +189,11 @@ fn follow_up_questions(msg: &Message, queried: &mut HashSet<String>) -> Vec<(Nam
         match &r.data {
             RData::PTR(ptr) => {
                 let target = (**ptr).clone();
-                let owner = r.name.to_string().trim_end_matches('.').to_ascii_lowercase();
+                let owner = r
+                    .name
+                    .to_string()
+                    .trim_end_matches('.')
+                    .to_ascii_lowercase();
                 if owner == SERVICES_META.trim_end_matches('.') {
                     // Enumerated a service *type*: browse it for instances.
                     want(target, RecordType::PTR, &mut out);
@@ -205,7 +213,10 @@ fn follow_up_questions(msg: &Message, queried: &mut HashSet<String>) -> Vec<(Nam
     }
     // Re-issue address questions other clients ask for flat `*.local` hosts.
     for q in msg.queries.iter() {
-        if !matches!(q.query_type(), RecordType::A | RecordType::AAAA | RecordType::ANY) {
+        if !matches!(
+            q.query_type(),
+            RecordType::A | RecordType::AAAA | RecordType::ANY
+        ) {
             continue;
         }
         if is_flat_local(q.name()) {
@@ -400,13 +411,17 @@ pub async fn run(state: crate::state::SharedState) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hickory_proto::rr::rdata::A;
     use hickory_proto::rr::Record;
+    use hickory_proto::rr::rdata::A;
 
     #[test]
     fn registry_insert_lookup_and_family() {
         let r = MdnsRegistry::default();
-        r.insert("macbook", IpAddr::V4(Ipv4Addr::new(192, 168, 1, 5)), Duration::from_secs(60));
+        r.insert(
+            "macbook",
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 5)),
+            Duration::from_secs(60),
+        );
         assert_eq!(r.lookup("MacBook", RecordType::A).len(), 1);
         assert!(r.lookup("macbook", RecordType::AAAA).is_empty());
         assert_eq!(r.count(), 1);
@@ -415,7 +430,11 @@ mod tests {
     #[test]
     fn registry_expires() {
         let r = MdnsRegistry::default();
-        r.insert("nas", IpAddr::V4(Ipv4Addr::new(10, 0, 0, 9)), Duration::from_millis(0));
+        r.insert(
+            "nas",
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 9)),
+            Duration::from_millis(0),
+        );
         std::thread::sleep(Duration::from_millis(5));
         assert!(r.lookup("nas", RecordType::A).is_empty());
     }
@@ -435,7 +454,13 @@ mod tests {
             RData::A(A(Ipv4Addr::new(192, 168, 1, 8))),
         ));
         let hosts = hosts_from_message(&msg);
-        assert_eq!(hosts, vec![("macbook".to_string(), IpAddr::V4(Ipv4Addr::new(192, 168, 1, 7)))]);
+        assert_eq!(
+            hosts,
+            vec![(
+                "macbook".to_string(),
+                IpAddr::V4(Ipv4Addr::new(192, 168, 1, 7))
+            )]
+        );
     }
 
     #[test]
@@ -444,11 +469,15 @@ mod tests {
         // Private/ULA/link-local/loopback are LAN-scoped.
         assert!(is_lan_addr(&IpAddr::V4(Ipv4Addr::new(192, 168, 1, 5))));
         assert!(is_lan_addr(&IpAddr::V4(Ipv4Addr::new(169, 254, 0, 1))));
-        assert!(is_lan_addr(&"fd24:b546::1".parse::<Ipv6Addr>().unwrap().into()));
+        assert!(is_lan_addr(
+            &"fd24:b546::1".parse::<Ipv6Addr>().unwrap().into()
+        ));
         assert!(is_lan_addr(&"fe80::1".parse::<Ipv6Addr>().unwrap().into()));
         // Public addresses are not.
         assert!(!is_lan_addr(&IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))));
-        assert!(!is_lan_addr(&"2a02:8109::1".parse::<Ipv6Addr>().unwrap().into()));
+        assert!(!is_lan_addr(
+            &"2a02:8109::1".parse::<Ipv6Addr>().unwrap().into()
+        ));
     }
 
     #[test]

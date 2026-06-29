@@ -301,7 +301,8 @@ where
         let mut app = app.clone();
         async move {
             let mut req = req.map(Body::new);
-            req.extensions_mut().insert(axum::extract::ConnectInfo(peer));
+            req.extensions_mut()
+                .insert(axum::extract::ConnectInfo(peer));
             let res: Result<Response, Infallible> = app.call(req).await;
             res
         }

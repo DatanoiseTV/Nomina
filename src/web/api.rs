@@ -172,11 +172,20 @@ pub async fn map_points(State(state): State<SharedState>, _auth: Authed) -> Resp
     // point keeps the contributing hosts (top 30, with their CIDR) so the UI can
     // list them when a marker is clicked.
     let geo_points = |ips: &[(std::net::IpAddr, u64)]| -> Vec<Value> {
-        type Bucket = (f64, f64, String, String, u64, HashMap<std::net::IpAddr, u64>);
+        type Bucket = (
+            f64,
+            f64,
+            String,
+            String,
+            u64,
+            HashMap<std::net::IpAddr, u64>,
+        );
         let mut m: HashMap<(i64, i64), Bucket> = HashMap::new();
         for (ip, count) in ips {
             let g = geo.lookup(*ip);
-            let (Some(lat), Some(lon)) = (g.lat, g.lon) else { continue };
+            let (Some(lat), Some(lon)) = (g.lat, g.lon) else {
+                continue;
+            };
             let key = ((lat * 20.0).round() as i64, (lon * 20.0).round() as i64);
             let e = m.entry(key).or_insert_with(|| {
                 (
@@ -216,7 +225,9 @@ pub async fn map_points(State(state): State<SharedState>, _auth: Authed) -> Resp
         for (ip, count) in ips {
             let g = geo.lookup(ip);
             if let Some(asn) = g.asn {
-                let e = agg.entry(asn).or_insert_with(|| (g.asn_org.clone().unwrap_or_default(), 0));
+                let e = agg
+                    .entry(asn)
+                    .or_insert_with(|| (g.asn_org.clone().unwrap_or_default(), 0));
                 e.1 += count;
             }
         }
@@ -230,9 +241,9 @@ pub async fn map_points(State(state): State<SharedState>, _auth: Authed) -> Resp
     };
     let blocked_asns = asn_breakdown(blocked_dest);
 
-    let origin = state.stats.origin().map(|o| {
-        json!({ "lat": o.lat, "lon": o.lon, "city": o.city, "country": o.country, "ip": o.ip })
-    });
+    let origin = state.stats.origin().map(
+        |o| json!({ "lat": o.lat, "lon": o.lon, "city": o.city, "country": o.country, "ip": o.ip }),
+    );
     ok_json(json!({
         "geoip": geo.has_geoip(),
         "asn": geo.has_asn(),
@@ -1439,7 +1450,11 @@ pub async fn put_settings(
         settings.tls_acme = v;
     }
     if let Some(v) = req.tls_acme_domains {
-        settings.tls_acme_domains = v.into_iter().map(|d| d.trim().to_string()).filter(|d| !d.is_empty()).collect();
+        settings.tls_acme_domains = v
+            .into_iter()
+            .map(|d| d.trim().to_string())
+            .filter(|d| !d.is_empty())
+            .collect();
     }
     if let Some(v) = req.tls_acme_contact {
         settings.tls_acme_contact = v.trim().to_string();
@@ -2222,13 +2237,18 @@ fn validate_scope(input: &DhcpScopeInput) -> Result<(), AppError> {
         .map_err(|_| validation_field("subnet", "invalid CIDR"))?;
     let fam_ok = |s: &str| -> bool {
         match s.parse::<std::net::IpAddr>() {
-            Ok(ip) => (ip.is_ipv4() && input.family == IpFamily::V4)
-                || (ip.is_ipv6() && input.family == IpFamily::V6),
+            Ok(ip) => {
+                (ip.is_ipv4() && input.family == IpFamily::V4)
+                    || (ip.is_ipv6() && input.family == IpFamily::V6)
+            }
             Err(_) => false,
         }
     };
     if !fam_ok(&input.range_start) {
-        return Err(validation_field("range_start", "invalid address for family"));
+        return Err(validation_field(
+            "range_start",
+            "invalid address for family",
+        ));
     }
     if !fam_ok(&input.range_end) {
         return Err(validation_field("range_end", "invalid address for family"));
@@ -2243,7 +2263,10 @@ fn validate_scope(input: &DhcpScopeInput) -> Result<(), AppError> {
     validate_dhcp_options(&input.options)
 }
 
-pub async fn list_dhcp_scopes(State(state): State<SharedState>, _auth: Authed) -> ApiResult<Response> {
+pub async fn list_dhcp_scopes(
+    State(state): State<SharedState>,
+    _auth: Authed,
+) -> ApiResult<Response> {
     let scopes = state.db.run(Db::list_dhcp_scopes).await?;
     Ok(ok_json(json!({ "scopes": scopes })))
 }
@@ -2258,8 +2281,13 @@ pub async fn get_dhcp_scope(
         .run(move |c| Db::dhcp_scope(c, id))
         .await?
         .ok_or_else(|| AppError::not_found("scope not found"))?;
-    let reservations = state.db.run(move |c| Db::list_dhcp_reservations(c, id)).await?;
-    Ok(ok_json(json!({ "scope": scope, "reservations": reservations })))
+    let reservations = state
+        .db
+        .run(move |c| Db::list_dhcp_reservations(c, id))
+        .await?;
+    Ok(ok_json(
+        json!({ "scope": scope, "reservations": reservations }),
+    ))
 }
 
 pub async fn create_dhcp_scope(
@@ -2400,7 +2428,10 @@ pub async fn delete_dhcp_reservation(
     Path(id): Path<i64>,
     _auth: Authed,
 ) -> ApiResult<Response> {
-    state.db.run(move |c| Db::delete_dhcp_reservation(c, id)).await?;
+    state
+        .db
+        .run(move |c| Db::delete_dhcp_reservation(c, id))
+        .await?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -2415,7 +2446,10 @@ pub async fn list_dhcp_leases(
     Query(q): Query<LeaseQuery>,
 ) -> ApiResult<Response> {
     let scope_id = q.scope_id;
-    let leases = state.db.run(move |c| Db::list_dhcp_leases(c, scope_id)).await?;
+    let leases = state
+        .db
+        .run(move |c| Db::list_dhcp_leases(c, scope_id))
+        .await?;
     Ok(ok_json(json!({ "leases": leases })))
 }
 

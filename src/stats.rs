@@ -379,7 +379,11 @@ impl Stats {
 
     /// Snapshot of blocked-destination IPs and counts (for `/api/map`).
     pub fn blocked_dest_ips(&self) -> Vec<(IpAddr, u64)> {
-        self.blocked_dest.lock().iter().map(|(k, v)| (*k, *v)).collect()
+        self.blocked_dest
+            .lock()
+            .iter()
+            .map(|(k, v)| (*k, *v))
+            .collect()
     }
 
     /// Record the public client IP of a blocked request (map's blocked-client
@@ -396,7 +400,11 @@ impl Stats {
 
     /// Snapshot of blocked-client IPs and counts (for `/api/map`).
     pub fn blocked_client_ips(&self) -> Vec<(IpAddr, u64)> {
-        self.blocked_client.lock().iter().map(|(k, v)| (*k, *v)).collect()
+        self.blocked_client
+            .lock()
+            .iter()
+            .map(|(k, v)| (*k, *v))
+            .collect()
     }
 
     /// Record this server's own geolocation (the distance counter's origin).
