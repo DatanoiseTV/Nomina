@@ -102,18 +102,30 @@ export async function renderMap(root, { registerCleanup }) {
 }
 
 // A titled bar-chart breakdown card. `items` is [{label, n}], sorted by caller.
-function breakdown(title, items, mono = "country") {
+// `mode` "asn" stacks the (long) label on its own line above the bar so it fits
+// the narrow side column; "country" keeps the compact inline layout.
+function breakdown(title, items, mode = "country") {
   const max = Math.max(1, ...items.map((i) => i.n));
+  const pct = (n) => Math.round((n / max) * 100);
+  const rows = items.length
+    ? items.map((i) =>
+        mode === "asn"
+          ? h("div.asn-row", [
+              h("div.asn-head", [
+                h("span.asn-name", { title: i.label }, i.label),
+                h("span.num", String(i.n)),
+              ]),
+              h("div.bar", h("span", { style: `width:${pct(i.n)}%` })),
+            ])
+          : h("div.row", [
+              h("span.mono", i.label),
+              h("div.bar", h("span", { style: `width:${pct(i.n)}%` })),
+              h("span.num", String(i.n)),
+            ]))
+    : [h("div.inline-note", "No data yet.")];
   return h("div.section", { style: "margin-bottom:16px" }, [
     h("h2", { style: "margin:0 0 12px" }, title),
-    h("div.card.map-side-card", h("div.card-pad", items.length
-      ? h("div.qtype-bar", items.map((i) =>
-          h("div.row", [
-            h("span.mono", { title: i.label, style: mono === "asn" ? "max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" : null }, i.label),
-            h("div.bar", h("span", { style: `width:${Math.round((i.n / max) * 100)}%` })),
-            h("span.num", String(i.n)),
-          ])))
-      : h("div.inline-note", "No data yet."))),
+    h("div.card.map-side-card", h("div.card-pad", h("div.qtype-bar", rows))),
   ]);
 }
 

@@ -844,6 +844,26 @@ dialog::backdrop { background: rgba(10, 14, 22, 0.5); backdrop-filter: blur(3px)
   overflow-y: auto;
   min-height: 0;
 }
+/* ASN breakdown: label on its own line above the bar so long org names fit. */
+.asn-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 0;
+}
+.asn-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.asn-name {
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
 .map-card {
   padding: 0;
   overflow: hidden;

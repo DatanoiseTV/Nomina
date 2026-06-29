@@ -12,9 +12,16 @@ All notable changes to Nomina are documented here. The format follows
   choose (e.g. `macbook.local` → `macbook.lan`), so clients that can't speak mDNS
   still resolve LAN hosts. Actively walks the DNS-SD chain (service types →
   instances → SRV → A/AAAA) so addresses are pulled onto multicast and learned
-  within seconds, not just when devices happen to announce. Configured at runtime
+  within seconds, not just when devices happen to announce; re-issues the address
+  questions other LAN clients ask, so service-less hosts (e.g. a Raspberry Pi)
+  surface too; and joins the multicast group on every interface (not just the
+  default) for multi-homed hosts. Configured at runtime
   in **Settings → mDNS** (enable, publish zone, TTL) — toggling starts/stops the
-  listener live, no restart. Listens on UDP 5353, coexists with a system
+  listener live, no restart. Also answers **reverse (PTR)** lookups for discovered
+  hosts (IP → `<host>.<zone>`). By default only **LAN-scoped** addresses are
+  republished (private, ULA, link-local) — a device's global/public IPv6 (or
+  public IPv4) is not served under a local name unless you tick "Also publish
+  public IPv6/IPv4 addresses". Listens on UDP 5353, coexists with a system
   responder, and surfaces the learned hosts in an **mDNS** view (`/api/mdns`).
 - **Top ASNs on the Map** — the Map view now lists the autonomous systems the
   resolved IPs belong to (e.g. Cloudflare, Google) alongside the Top countries

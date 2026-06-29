@@ -31,7 +31,7 @@ libc = "0.2"
 # Bundle SQLite so the single binary has no system-sqlite dependency. Version
 # pinned to match diesel 2's libsqlite3-sys requirement (one resolved version).
 libsqlite3-sys = { version = "0.30", features = ["bundled"] }
-nix = { version = "0.29", default-features = false, features = ["user"] }
+nix = { version = "0.29", default-features = false, features = ["user", "net"] }
 parking_lot = "0.12"
 rand = "0.8"
 rcgen = "0.13"

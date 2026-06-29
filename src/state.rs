@@ -172,6 +172,10 @@ impl AppState {
         self.settings.read().mdns_ttl.max(1)
     }
 
+    pub fn mdns_publish_public(&self) -> bool {
+        self.settings.read().mdns_publish_public
+    }
+
     /// Next round-robin rotation offset.
     pub fn next_rotation(&self) -> u64 {
         self.rr_counter.fetch_add(1, Ordering::Relaxed)

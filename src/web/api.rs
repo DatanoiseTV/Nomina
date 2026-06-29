@@ -1199,6 +1199,7 @@ pub struct SettingsUpdate {
     mdns_enabled: Option<bool>,
     mdns_zone: Option<String>,
     mdns_ttl: Option<u32>,
+    mdns_publish_public: Option<bool>,
 }
 
 pub async fn get_settings(State(state): State<SharedState>, _auth: Authed) -> ApiResult<Response> {
@@ -1288,6 +1289,9 @@ pub async fn put_settings(
     }
     if let Some(v) = req.mdns_ttl {
         settings.mdns_ttl = v.max(1);
+    }
+    if let Some(v) = req.mdns_publish_public {
+        settings.mdns_publish_public = v;
     }
 
     let to_store = settings.clone();

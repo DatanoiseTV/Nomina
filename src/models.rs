@@ -294,6 +294,11 @@ pub struct Settings {
     /// TTL (seconds) for republished mDNS records. Low by design.
     #[serde(default = "default_mdns_ttl")]
     pub mdns_ttl: u32,
+    /// Also publish globally-routable (public) IPv6/IPv4 addresses, not just
+    /// LAN-scoped ones. Off by default — a device's public address normally has
+    /// no business being served under a local name.
+    #[serde(default)]
+    pub mdns_publish_public: bool,
 }
 
 fn default_true() -> bool {
@@ -338,6 +343,7 @@ impl Default for Settings {
             mdns_enabled: false,
             mdns_zone: String::new(),
             mdns_ttl: 120,
+            mdns_publish_public: false,
         }
     }
 }

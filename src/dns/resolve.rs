@@ -232,29 +232,54 @@ fn apply_load_balance(answers: &mut [Record], mode: LoadBalance, rotation: impl 
     }
 }
 
-/// Answer `<host>.<mdns-zone>` A/AAAA queries from the mDNS registry, when mDNS
-/// discovery is enabled. Returns `None` if disabled, out of zone, or unknown.
+/// Answer mDNS-backed queries when discovery is enabled: forward `<host>.<zone>`
+/// A/AAAA, and reverse `*.in-addr.arpa`/`*.ip6.arpa` PTR for discovered IPs (so
+/// reverse lookups of LAN hosts resolve to their published name). Returns `None`
+/// if disabled, out of zone/scope, or unknown.
 fn mdns_answer(state: &AppState, qname: &Name, qtype: RecordType) -> Option<Vec<Record>> {
-    if !state.mdns_enabled() || !matches!(qtype, RecordType::A | RecordType::AAAA | RecordType::ANY) {
+    if !state.mdns_enabled() {
         return None;
     }
     let zone = state.mdns_zone()?;
-    let name = qname.to_string().trim_end_matches('.').to_ascii_lowercase();
-    let label = name.strip_suffix(&format!(".{zone}"))?;
-    if label.is_empty() || label.contains('.') {
-        return None; // only flat hosts directly under the zone
-    }
     let ttl = state.mdns_ttl();
-    let answers: Vec<Record> = state
-        .mdns()
-        .lookup(label, qtype)
-        .into_iter()
-        .map(|ip| match ip {
-            IpAddr::V4(v4) => Record::from_rdata(qname.clone(), ttl, RData::A(A(v4))),
-            IpAddr::V6(v6) => Record::from_rdata(qname.clone(), ttl, RData::AAAA(AAAA(v6))),
-        })
-        .collect();
-    if answers.is_empty() { None } else { Some(answers) }
+
+    // Reverse: PTR for a discovered address -> its published name.
+    if matches!(qtype, RecordType::PTR | RecordType::ANY) {
+        if let Ok(net) = qname.parse_arpa_name() {
+            let ip = net.addr();
+            if let Some(host) = state.mdns().reverse(&ip) {
+                if let Ok(target) = Name::from_ascii(format!("{host}.{zone}.")) {
+                    return Some(vec![Record::from_rdata(
+                        qname.clone(),
+                        ttl,
+                        RData::PTR(hickory_proto::rr::rdata::PTR(target)),
+                    )]);
+                }
+            }
+        }
+    }
+
+    // Forward: A/AAAA for <host>.<zone>.
+    if matches!(qtype, RecordType::A | RecordType::AAAA | RecordType::ANY) {
+        let name = qname.to_string().trim_end_matches('.').to_ascii_lowercase();
+        if let Some(label) = name.strip_suffix(&format!(".{zone}")) {
+            if !label.is_empty() && !label.contains('.') {
+                let answers: Vec<Record> = state
+                    .mdns()
+                    .lookup(label, qtype)
+                    .into_iter()
+                    .map(|ip| match ip {
+                        IpAddr::V4(v4) => Record::from_rdata(qname.clone(), ttl, RData::A(A(v4))),
+                        IpAddr::V6(v6) => Record::from_rdata(qname.clone(), ttl, RData::AAAA(AAAA(v6))),
+                    })
+                    .collect();
+                if !answers.is_empty() {
+                    return Some(answers);
+                }
+            }
+        }
+    }
+    None
 }
 
 fn same_name(a: &Name, b: &Name) -> bool {

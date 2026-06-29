@@ -129,6 +129,7 @@ export async function renderSettings(root) {
     placeholder: "e.g. lan",
   });
   const mdnsTtl = h("input", { type: "number", name: "mdns_ttl", value: settings.mdns_ttl ?? 120, min: 1 });
+  const mdnsPublic = h("input", { type: "checkbox", name: "mdns_publish_public", checked: !!settings.mdns_publish_public });
 
   const save = h("button.btn.btn-primary", "Save settings");
 
@@ -229,6 +230,11 @@ export async function renderSettings(root) {
           h("div.field", { style: "max-width:160px" }, [h("label", "Record TTL (s)"), mdnsTtl,
             h("div.hint", "Low by design.")]),
         ]),
+        h("div.field", [
+          h("label.switch", [mdnsPublic, h("span.track"),
+            h("span", "Also publish public IPv6/IPv4 addresses")]),
+          h("div.hint", "Off by default: only LAN-scoped addresses (private, ULA, link-local) are published. Enable to also serve a host's globally-routable addresses."),
+        ]),
         h("div.hint", "Listens on UDP 5353 and coexists with a system responder. Takes effect within a couple of seconds; no restart needed."),
       ]),
     ]),
@@ -301,6 +307,7 @@ export async function renderSettings(root) {
       mdns_enabled: mdnsEnabled.checked,
       mdns_zone: mdnsZone.value.trim(),
       mdns_ttl: Number(mdnsTtl.value),
+      mdns_publish_public: mdnsPublic.checked,
     };
 
     const ARRAY_FIELDS = new Set(["forwarders", "allow_axfr_from", "blocked_asns"]);
