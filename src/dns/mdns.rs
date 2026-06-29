@@ -6,7 +6,7 @@
 //! becomes `macbook.<zone>`. The resolver consults [`MdnsRegistry`] for names
 //! under that zone before falling through to the authoritative store.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -20,6 +20,10 @@ use tracing::warn;
 
 const MDNS_V4: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
 const MDNS_PORT: u16 = 5353;
+/// DNS-SD meta-query: "what service types exist on this link?"
+const SERVICES_META: &str = "_services._dns-sd._udp.local.";
+/// Cap on the dedup set of already-queried names, to bound memory.
+const QUERIED_CAP: usize = 4096;
 
 /// Discovered `*.local` hosts (single-label name, lowercase) -> addresses + expiry.
 #[derive(Default)]
@@ -61,6 +65,23 @@ impl MdnsRegistry {
         let now = Instant::now();
         self.hosts.lock().values().filter(|(_, e)| *e > now).count()
     }
+
+    /// Snapshot of currently-fresh hosts: (host label, addresses, seconds left).
+    /// Sorted by host name for stable display.
+    pub fn snapshot(&self) -> Vec<(String, Vec<IpAddr>, u64)> {
+        let now = Instant::now();
+        let mut out: Vec<(String, Vec<IpAddr>, u64)> = self
+            .hosts
+            .lock()
+            .iter()
+            .filter(|(_, (_, exp))| *exp > now)
+            .map(|(host, (ips, exp))| {
+                (host.clone(), ips.clone(), exp.saturating_duration_since(now).as_secs())
+            })
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
 }
 
 /// Extract (single-label host, address) pairs from the `*.local` A/AAAA records
@@ -87,15 +108,64 @@ fn hosts_from_message(msg: &Message) -> Vec<(String, IpAddr)> {
     out
 }
 
-/// A multicast-DNS service-enumeration query, to prompt responses on the LAN.
-fn enumeration_query() -> Vec<u8> {
+/// Build a multicast-DNS query carrying one or more questions. Class is left as
+/// plain `IN` (QM, the top "unicast-response" bit clear) so responders answer on
+/// multicast — where this passive listener can snoop the addresses.
+fn query_for(questions: &[(Name, RecordType)]) -> Vec<u8> {
     let mut msg = Message::new(0, MessageType::Query, OpCode::Query);
-    if let Ok(name) = Name::from_ascii("_services._dns-sd._udp.local.") {
-        let mut q = Query::query(name, RecordType::PTR);
+    for (name, rtype) in questions {
+        let mut q = Query::query(name.clone(), *rtype);
         q.set_query_class(DNSClass::IN);
         msg.add_query(q);
     }
     msg.to_vec().unwrap_or_default()
+}
+
+/// The single-question service-enumeration query that kicks off discovery.
+fn enumeration_query() -> Vec<u8> {
+    match Name::from_ascii(SERVICES_META) {
+        Ok(name) => query_for(&[(name, RecordType::PTR)]),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Walk a received message and decide which follow-up questions to ask so the
+/// DNS-SD chain advances toward host A/AAAA records:
+///   `_services._dns-sd._udp.local` PTR -> service type
+///   `<service-type>.local`         PTR -> service instance
+///   `<service-instance>`           SRV -> target hostname (then A/AAAA)
+/// `queried` dedups so we don't re-ask the same (name,type) within a cycle.
+fn follow_up_questions(msg: &Message, queried: &mut HashSet<String>) -> Vec<(Name, RecordType)> {
+    let mut out = Vec::new();
+    let mut want = |name: Name, rtype: RecordType, out: &mut Vec<(Name, RecordType)>| {
+        let key = format!("{}|{rtype}", name.to_string().to_ascii_lowercase());
+        if queried.len() < QUERIED_CAP && queried.insert(key) {
+            out.push((name, rtype));
+        }
+    };
+    for r in msg.answers.iter().chain(msg.additionals.iter()) {
+        match &r.data {
+            RData::PTR(ptr) => {
+                let target = (**ptr).clone();
+                let owner = r.name.to_string().trim_end_matches('.').to_ascii_lowercase();
+                if owner == SERVICES_META.trim_end_matches('.') {
+                    // Enumerated a service *type*: browse it for instances.
+                    want(target, RecordType::PTR, &mut out);
+                } else {
+                    // A service *instance*: resolve it to a host via SRV.
+                    want(target, RecordType::SRV, &mut out);
+                }
+            }
+            RData::SRV(srv) => {
+                // Got the target hostname: ask for its addresses directly.
+                let host = srv.target.clone();
+                want(host.clone(), RecordType::A, &mut out);
+                want(host, RecordType::AAAA, &mut out);
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 fn bind_socket() -> std::io::Result<UdpSocket> {
@@ -123,21 +193,34 @@ pub async fn run(registry: Arc<MdnsRegistry>, ttl: Duration) {
     let dest = SocketAddr::from((MDNS_V4, MDNS_PORT));
     let _ = sock.send_to(&enumeration_query(), dest).await;
 
-    let mut buf = vec![0u8; 4096];
-    let mut tick = tokio::time::interval(Duration::from_secs(60));
+    // Names we have already asked about this cycle; cleared on each tick so the
+    // chain is re-walked periodically (and freed hosts get re-confirmed).
+    let mut queried: HashSet<String> = HashSet::new();
+    let mut buf = vec![0u8; 9000];
+    let mut tick = tokio::time::interval(Duration::from_secs(30));
     loop {
         tokio::select! {
             res = sock.recv_from(&mut buf) => match res {
-                Ok((n, _src)) => {
-                    if let Ok(msg) = Message::from_vec(&buf[..n]) {
-                        for (host, ip) in hosts_from_message(&msg) {
-                            registry.insert(&host, ip, ttl);
+                Ok((n, src)) => {
+                    let Ok(msg) = Message::from_vec(&buf[..n]) else { continue };
+                    // Passive harvest: learn any *.local host addresses present.
+                    for (host, ip) in hosts_from_message(&msg) {
+                        registry.insert(&host, ip, ttl);
+                    }
+                    // Active chase: advance the DNS-SD chain toward addresses.
+                    let follow = follow_up_questions(&msg, &mut queried);
+                    if !follow.is_empty() {
+                        // Chunk to keep individual query packets small.
+                        for batch in follow.chunks(16) {
+                            let _ = sock.send_to(&query_for(batch), dest).await;
                         }
+                        tracing::debug!("mDNS rx {n}B from {src}: asked {} follow-up(s)", follow.len());
                     }
                 }
                 Err(e) => warn!("mDNS recv error: {e}"),
             },
             _ = tick.tick() => {
+                queried.clear();
                 let _ = sock.send_to(&enumeration_query(), dest).await;
             }
         }

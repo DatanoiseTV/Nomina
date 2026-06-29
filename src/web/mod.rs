@@ -51,6 +51,7 @@ pub fn router(state: SharedState) -> Router {
         .route("/api/stats", get(api::stats))
         .route("/api/stats/clear", post(api::clear_stats))
         .route("/api/map", get(api::map_points))
+        .route("/api/mdns", get(api::mdns_hosts))
         .route(
             "/api/queries",
             get(api::query_log).delete(api::clear_query_log),

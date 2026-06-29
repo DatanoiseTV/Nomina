@@ -19,6 +19,7 @@ import { renderDyndns } from "./views/dyndns.js";
 import { renderDhcp } from "./views/dhcp.js";
 import { renderQueries } from "./views/queries.js";
 import { renderMap } from "./views/map.js";
+import { renderMdns } from "./views/mdns.js";
 
 // ---- Theme -----------------------------------------------------------------
 const THEME_KEY = "nomina-theme";
@@ -62,6 +63,7 @@ const routes = [
   { re: /^\/dashboard$/, view: renderDashboard, nav: "dashboard", title: "Dashboard" },
   { re: /^\/queries(?:\?.*)?$/, view: renderQueries, nav: "queries", title: "Request log" },
   { re: /^\/map$/, view: renderMap, nav: "map", title: "Map" },
+  { re: /^\/discovered$/, view: renderMdns, nav: "discovered", title: "Discovered" },
   { re: /^\/zones$/, view: renderZones, nav: "zones", title: "Zones" },
   { re: /^\/zones\/(\d+)$/, view: renderZoneDetail, nav: "zones", title: "Zone" },
   { re: /^\/secondary$/, view: renderSecondary, nav: "secondary", title: "Secondary zones" },
@@ -93,8 +95,9 @@ const NAV_ITEMS = [
   { id: "conditional", label: "Conditional", href: "#/conditional", icon: "shuffle" },
   { section: "Dynamic DNS" },
   { id: "dyndns", label: "DynDNS", href: "#/dyndns", icon: "link" },
-  { section: "DHCP" },
+  { section: "LAN" },
   { id: "dhcp", label: "DHCP", href: "#/dhcp", icon: "link" },
+  { id: "discovered", label: "Discovered", href: "#/discovered", icon: "radio" },
   { section: "System" },
   { id: "settings", label: "Settings", href: "#/settings", icon: "settings" },
   { id: "account", label: "Account", href: "#/account", icon: "account" },

@@ -172,6 +172,33 @@ pub async fn map_points(State(state): State<SharedState>, _auth: Authed) -> Resp
     ok_json(json!({ "geoip": true, "points": points }))
 }
 
+/// mDNS discovery state and the live list of learned `*.local` hosts, with the
+/// zone/TTL they are republished under.
+pub async fn mdns_hosts(State(state): State<SharedState>, _auth: Authed) -> Response {
+    let cfg = &state.config.mdns;
+    let zone = cfg.zone.as_deref().map(|z| z.trim_end_matches('.').to_ascii_lowercase());
+    let hosts: Vec<_> = state
+        .mdns()
+        .snapshot()
+        .into_iter()
+        .map(|(host, addrs, ttl)| {
+            let published = zone.as_deref().map(|z| format!("{host}.{z}"));
+            json!({
+                "host": format!("{host}.local"),
+                "published": published,
+                "addresses": addrs.iter().map(|a| a.to_string()).collect::<Vec<_>>(),
+                "ttl": ttl,
+            })
+        })
+        .collect();
+    ok_json(json!({
+        "enabled": cfg.enabled,
+        "zone": zone,
+        "ttl": cfg.ttl.unwrap_or(120),
+        "hosts": hosts,
+    }))
+}
+
 /// Clear retained per-query detail (recent queries + top domains).
 pub async fn clear_stats(State(state): State<SharedState>, _auth: Authed) -> Response {
     state.stats.clear_log();
