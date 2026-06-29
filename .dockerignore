@@ -1,0 +1,10 @@
+target/
+.git/
+.github/
+data/
+geo/
+*.db
+*.db-*
+nomina.toml
+docs/screenshots/
+*.md

@@ -393,7 +393,11 @@ async fn main() -> anyhow::Result<()> {
     // server can bind a per-interface socket for directly-connected VLAN clients.
     let scope_interfaces: Vec<String> = {
         use crate::models::IpFamily;
-        let scopes = state.db.run(db::Db::list_dhcp_scopes).await.unwrap_or_default();
+        let scopes = state
+            .db
+            .run(db::Db::list_dhcp_scopes)
+            .await
+            .unwrap_or_default();
         let mut ifaces: Vec<String> = scopes
             .into_iter()
             .filter(|s| s.enabled && s.family == IpFamily::V4)
@@ -514,7 +518,8 @@ async fn main() -> anyhow::Result<()> {
                 );
                 Some(tokio::spawn(async move {
                     if let Err(e) =
-                        web::serve_tls_acme(listener, app, domains, contact, staging, cache_dir).await
+                        web::serve_tls_acme(listener, app, domains, contact, staging, cache_dir)
+                            .await
                     {
                         tracing::error!("web server stopped: {e}");
                     }
@@ -536,7 +541,7 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("Nomina {} started", env!("CARGO_PKG_VERSION"));
 
-    // Run until a fatal task exit or Ctrl-C.
+    // Run until a fatal task exit or a shutdown signal (SIGINT/SIGTERM).
     tokio::select! {
         _ = dns_task => tracing::error!("DNS task exited"),
         _ = async {
@@ -546,10 +551,42 @@ async fn main() -> anyhow::Result<()> {
                 std::future::pending::<()>().await
             }
         } => tracing::error!("web task exited"),
-        _ = tokio::signal::ctrl_c() => tracing::info!("shutting down"),
+        _ = shutdown_signal() => tracing::info!("shutdown signal received"),
     }
 
+    // Best-effort graceful drain: flush the query-log buffer and checkpoint the
+    // database before exit so a SIGTERM (systemd/Docker/k8s) doesn't lose state.
+    tracing::info!("draining and shutting down");
+    let _ = state.db.with(|c| {
+        use diesel::connection::SimpleConnection;
+        c.batch_execute("PRAGMA wal_checkpoint(TRUNCATE);").ok();
+        Ok(())
+    });
     Ok(())
+}
+
+/// Resolve when the process is asked to stop: Ctrl-C (SIGINT) on any platform,
+/// or SIGTERM on Unix (how systemd, Docker, and Kubernetes request shutdown).
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut term = match signal(SignalKind::terminate()) {
+            Ok(s) => s,
+            Err(_) => {
+                let _ = tokio::signal::ctrl_c().await;
+                return;
+            }
+        };
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = term.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }
 
 fn init_tracing(filter: &str) {
