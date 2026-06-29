@@ -36,6 +36,7 @@
    cleanly in both modes (no blue cast on the chrome). */
 :root,
 :root[data-theme="light"] {
+  color-scheme: light;
   --bg: #fafafa;
   --bg-elev: #ffffff;
   --bg-sunken: #f4f4f5;
@@ -66,6 +67,7 @@
 
 /* ---- Dark palette (neutral charcoal, not navy) ---- */
 :root[data-theme="dark"] {
+  color-scheme: dark;
   --bg: #0b0b0d;
   --bg-elev: #161618;
   --bg-sunken: #09090b;
@@ -97,6 +99,7 @@
 /* Honour OS preference when theme = system */
 @media (prefers-color-scheme: dark) {
   :root[data-theme="system"] {
+    color-scheme: dark;
     --bg: #0b0b0d;
     --bg-elev: #161618;
     --bg-sunken: #09090b;
@@ -492,8 +495,8 @@ table.tbl td.actions { text-align: right; }
 .field .hint { color: var(--text-faint); font-size: 0.8rem; margin-top: var(--s-2); line-height: 1.45; }
 .field .err { color: var(--danger); font-size: 0.82rem; margin-top: var(--s-2); font-weight: 550; }
 
-input[type="text"], input[type="password"], input[type="number"],
-input[type="email"], input[type="url"], select, textarea {
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+select, textarea {
   width: 100%;
   font: inherit;
   font-size: 0.9rem;

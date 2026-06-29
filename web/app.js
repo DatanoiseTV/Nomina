@@ -18,6 +18,7 @@ import { renderConditional } from "./views/conditional.js";
 import { renderDyndns } from "./views/dyndns.js";
 import { renderDhcp } from "./views/dhcp.js";
 import { renderQueries } from "./views/queries.js";
+import { renderMap } from "./views/map.js";
 
 // ---- Theme -----------------------------------------------------------------
 const THEME_KEY = "nomina-theme";
@@ -60,6 +61,7 @@ const routes = [
   { re: /^\/?$/, view: renderDashboard, nav: "dashboard", title: "Dashboard" },
   { re: /^\/dashboard$/, view: renderDashboard, nav: "dashboard", title: "Dashboard" },
   { re: /^\/queries(?:\?.*)?$/, view: renderQueries, nav: "queries", title: "Request log" },
+  { re: /^\/map$/, view: renderMap, nav: "map", title: "Map" },
   { re: /^\/zones$/, view: renderZones, nav: "zones", title: "Zones" },
   { re: /^\/zones\/(\d+)$/, view: renderZoneDetail, nav: "zones", title: "Zone" },
   { re: /^\/secondary$/, view: renderSecondary, nav: "secondary", title: "Secondary zones" },
@@ -78,6 +80,7 @@ const NAV_ITEMS = [
   { section: "Overview" },
   { id: "dashboard", label: "Dashboard", href: "#/dashboard", icon: "dashboard" },
   { id: "queries", label: "Request log", href: "#/queries", icon: "inbox" },
+  { id: "map", label: "Map", href: "#/map", icon: "globe" },
   { section: "DNS" },
   { id: "zones", label: "Zones", href: "#/zones", icon: "zones" },
   { id: "views", label: "Views", href: "#/views", icon: "views" },

@@ -4,6 +4,20 @@ All notable changes to Nomina are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Map view** — plots the geolocated public IPs Nomina has resolved on an
+  interactive world map (vendored Leaflet + OpenStreetMap tiles; no API key).
+  Backed by `/api/map` and the GeoIP City database. DB-IP's free, account-less
+  `lite` databases work as well as MaxMind GeoLite2.
+
+### Fixed
+- Light theme: form fields (e.g. the search box) no longer render with a dark
+  background — inputs are styled uniformly and `color-scheme` is set per theme.
+- Embedded web assets are served `Cache-Control: no-cache`, so a rebuilt UI is
+  picked up without a manual hard refresh.
+
 ## [0.2.0] - 2026-06-28
 
 ### Added

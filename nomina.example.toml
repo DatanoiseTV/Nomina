@@ -57,12 +57,14 @@ auto_self_signed = true
 # group = "nomina"
 
 [geo]
-# Optional MaxMind GeoLite2 databases (user-supplied; not redistributed).
-# When set, views can match clients by country/continent/ASN (GeoDNS) and the
-# `blocked_asns` setting can reject traffic by autonomous system.
-# Download free GeoLite2 databases from https://www.maxmind.com/ (account required).
-# geoip_db = "/etc/nomina/GeoLite2-City.mmdb"   # or GeoLite2-Country.mmdb
-# asn_db   = "/etc/nomina/GeoLite2-ASN.mmdb"
+# Optional GeoIP databases (user-supplied; not redistributed). When set, the Map
+# view plots resolved IPs, views can match clients by country/continent/ASN
+# (GeoDNS), and `blocked_asns` can reject traffic by autonomous system. Two free
+# MMDB sources work:
+#   - DB-IP "lite" — NO account/key needed: https://db-ip.com/db/lite.php
+#   - MaxMind GeoLite2 — free account required: https://www.maxmind.com/
+# geoip_db = "/etc/nomina/dbip-city.mmdb"   # or GeoLite2-City.mmdb
+# asn_db   = "/etc/nomina/dbip-asn.mmdb"    # or GeoLite2-ASN.mmdb
 
 [dhcp]
 # Built-in DHCP server. Disabled by default: with both lists empty, no DHCP

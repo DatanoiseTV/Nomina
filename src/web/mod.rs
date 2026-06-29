@@ -35,9 +35,12 @@ use std::net::SocketAddr;
 #[folder = "web/"]
 struct Assets;
 
+// `img-src` also allows OpenStreetMap tile servers for the Map view (Leaflet is
+// vendored locally; only the map tiles are fetched from OSM).
 const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
-    img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; \
-    base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
+    img-src 'self' data: https://*.tile.openstreetmap.org; connect-src 'self'; \
+    font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; \
+    frame-ancestors 'none'";
 
 /// Build the full application router.
 pub fn router(state: SharedState) -> Router {
@@ -47,6 +50,7 @@ pub fn router(state: SharedState) -> Router {
         .route("/api/status", get(api::status))
         .route("/api/stats", get(api::stats))
         .route("/api/stats/clear", post(api::clear_stats))
+        .route("/api/map", get(api::map_points))
         .route(
             "/api/queries",
             get(api::query_log).delete(api::clear_query_log),
@@ -260,9 +264,14 @@ async fn static_handler(uri: Uri) -> Response {
 
 fn serve_embedded(content: rust_embed::EmbeddedFile) -> Response {
     let mime = content.metadata.mimetype();
+    // `no-cache` = the browser must revalidate before reuse, so a rebuilt UI is
+    // picked up without a manual hard refresh (assets aren't fingerprinted).
     (
         StatusCode::OK,
-        [(header::CONTENT_TYPE, mime.to_string())],
+        [
+            (header::CONTENT_TYPE, mime.to_string()),
+            (header::CACHE_CONTROL, "no-cache".to_string()),
+        ],
         content.data.into_owned(),
     )
         .into_response()

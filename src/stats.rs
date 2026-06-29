@@ -23,6 +23,7 @@ const LATENCY_CAPACITY: usize = 4000;
 const SERIES_WINDOW: usize = 300; // seconds retained
 const SERIES_OUTPUT: usize = 60; // seconds returned to the dashboard
 const TOP_TRACK_CAP: usize = 5000; // distinct domains tracked
+const RESOLVED_CAP: usize = 5000; // distinct resolved IPs tracked for the map
 const TOP_RETURN: usize = 20;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -147,6 +148,8 @@ pub struct Stats {
     series: Mutex<Series>,
     /// Recent per-query latencies in microseconds (bounded ring).
     latencies: Mutex<VecDeque<u64>>,
+    /// Public resolved (answer) IPs -> count, for the geo map (bounded).
+    resolved: Mutex<HashMap<IpAddr, u64>>,
     started: Instant,
     started_at: String,
 }
@@ -161,10 +164,38 @@ impl Default for Stats {
             top_blocked: Mutex::new(HashMap::new()),
             series: Mutex::new(Series::new()),
             latencies: Mutex::new(VecDeque::with_capacity(LATENCY_CAPACITY)),
+            resolved: Mutex::new(HashMap::new()),
             started: Instant::now(),
             started_at: OffsetDateTime::now_utc()
                 .format(&Rfc3339)
                 .unwrap_or_default(),
+        }
+    }
+}
+
+/// Whether an address is a globally-routable public IP (worth geolocating).
+/// Excludes private, loopback, link-local, unique-local, multicast, CGNAT, and
+/// documentation ranges.
+fn is_global(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(a) => {
+            !(a.is_private()
+                || a.is_loopback()
+                || a.is_link_local()
+                || a.is_broadcast()
+                || a.is_documentation()
+                || a.is_unspecified()
+                || a.is_multicast()
+                || a.octets()[0] == 0
+                || (a.octets()[0] == 100 && (a.octets()[1] & 0xc0) == 64)) // 100.64/10 CGNAT
+        }
+        IpAddr::V6(a) => {
+            !(a.is_loopback()
+                || a.is_unspecified()
+                || a.is_multicast()
+                || (a.segments()[0] & 0xffc0) == 0xfe80 // link-local fe80::/10
+                || (a.segments()[0] & 0xfe00) == 0xfc00 // unique-local fc00::/7
+                || a.segments()[0] == 0x2001 && a.segments()[1] == 0x0db8) // 2001:db8::/32 doc
         }
     }
 }
@@ -290,6 +321,25 @@ impl Stats {
         self.counters
             .dnssec_failures
             .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record public resolved (answer) IP addresses for the geo map. Private,
+    /// loopback, and otherwise non-global addresses are ignored.
+    pub fn record_resolved<I: IntoIterator<Item = IpAddr>>(&self, ips: I) {
+        let mut m = self.resolved.lock();
+        for ip in ips {
+            if !is_global(ip) {
+                continue;
+            }
+            if m.len() < RESOLVED_CAP || m.contains_key(&ip) {
+                *m.entry(ip).or_insert(0) += 1;
+            }
+        }
+    }
+
+    /// Snapshot of resolved IPs and their counts (for `/api/map`).
+    pub fn resolved_ips(&self) -> Vec<(IpAddr, u64)> {
+        self.resolved.lock().iter().map(|(k, v)| (*k, *v)).collect()
     }
 
     /// Record a query's end-to-end resolution latency.

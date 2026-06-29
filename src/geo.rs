@@ -10,7 +10,7 @@ use std::path::Path;
 use maxminddb::{Reader, path};
 
 /// The geo attributes of a client IP, as far as the loaded databases know.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ClientGeo {
     /// ISO 3166-1 alpha-2 country code, uppercase (e.g. `DE`).
     pub country: Option<String>,
@@ -18,6 +18,9 @@ pub struct ClientGeo {
     pub continent: Option<String>,
     /// City name (English), when a City database is loaded.
     pub city: Option<String>,
+    /// Latitude / longitude, when a City database is loaded.
+    pub lat: Option<f64>,
+    pub lon: Option<f64>,
     /// Autonomous System number.
     pub asn: Option<u32>,
 }
@@ -79,6 +82,14 @@ impl GeoDb {
                     .map(|s| s.to_uppercase());
                 g.city = res
                     .decode_path::<String>(&path!["city", "names", "en"])
+                    .ok()
+                    .flatten();
+                g.lat = res
+                    .decode_path::<f64>(&path!["location", "latitude"])
+                    .ok()
+                    .flatten();
+                g.lon = res
+                    .decode_path::<f64>(&path!["location", "longitude"])
                     .ok()
                     .flatten();
             }

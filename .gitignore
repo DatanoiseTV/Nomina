@@ -9,3 +9,6 @@
 # Python bytecode
 __pycache__/
 *.pyc
+
+# GeoIP databases (user-supplied; not redistributed)
+/geo/

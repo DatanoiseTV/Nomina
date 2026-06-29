@@ -135,6 +135,38 @@ pub async fn stats(State(state): State<SharedState>, _auth: Authed) -> Response 
     ok_json(snap)
 }
 
+/// Geolocated resolved-IP points for the map. Aggregates the tracked public
+/// answer IPs by location (needs a GeoLite2/DB-IP City database).
+pub async fn map_points(State(state): State<SharedState>, _auth: Authed) -> Response {
+    let geo = state.geo();
+    if !geo.has_geoip() {
+        return ok_json(json!({ "geoip": false, "points": [] }));
+    }
+    use std::collections::HashMap;
+    // Aggregate by rounded lat/lon so nearby cities cluster into one marker.
+    let mut agg: HashMap<(i64, i64), (f64, f64, String, String, u64)> = HashMap::new();
+    for (ip, count) in state.stats.resolved_ips() {
+        let g = geo.lookup(ip);
+        let (Some(lat), Some(lon)) = (g.lat, g.lon) else { continue };
+        let key = ((lat * 20.0).round() as i64, (lon * 20.0).round() as i64);
+        let e = agg.entry(key).or_insert((
+            lat,
+            lon,
+            g.city.clone().unwrap_or_default(),
+            g.country.clone().unwrap_or_default(),
+            0,
+        ));
+        e.4 += count;
+    }
+    let points: Vec<_> = agg
+        .values()
+        .map(|(lat, lon, city, country, count)| {
+            json!({ "lat": lat, "lon": lon, "city": city, "country": country, "count": count })
+        })
+        .collect();
+    ok_json(json!({ "geoip": true, "points": points }))
+}
+
 /// Clear retained per-query detail (recent queries + top domains).
 pub async fn clear_stats(State(state): State<SharedState>, _auth: Authed) -> Response {
     state.stats.clear_log();

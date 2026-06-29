@@ -159,6 +159,15 @@ pub async fn resolve_query(
         state.next_rotation()
     });
 
+    // Track public answer IPs for the geo map.
+    state
+        .stats
+        .record_resolved(out.answers.iter().filter_map(|r| match &r.data {
+            RData::A(a) => Some(IpAddr::V4(a.0)),
+            RData::AAAA(a) => Some(IpAddr::V6(a.0)),
+            _ => None,
+        }));
+
     if let Some(entry) = state.stats.record(
         state.query_log(),
         client,
