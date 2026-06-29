@@ -7,6 +7,14 @@ All notable changes to Nomina are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **DHCP per-interface scopes (direct VLANs)** — a scope can be pinned to a
+  network interface (e.g. `eth0.20`) in the DHCP editor. Directly-connected,
+  non-relayed clients are matched to the scope serving the interface their
+  request arrived on (Linux `SO_BINDTODEVICE`), so several VLANs can be served
+  without a relay. Relayed clients continue to match by `giaddr`/subnet. A new
+  `/api/interfaces` endpoint backs the interface picker. Interface changes need a
+  restart (sockets bind while privileged). Interface binding is Linux-only;
+  elsewhere scopes fall back to relay/subnet selection.
 - **mDNS discovery & republishing** — discover the `*.local` hosts Bonjour/Avahi
   announce on the LAN and republish them as low-TTL records under a zone you
   choose (e.g. `macbook.local` → `macbook.lan`), so clients that can't speak mDNS

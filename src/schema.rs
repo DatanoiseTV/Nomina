@@ -178,6 +178,7 @@ diesel::table! {
         options -> Text,
         created_at -> Text,
         server_id -> Nullable<Text>,
+        interface -> Nullable<Text>,
     }
 }
 

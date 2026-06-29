@@ -184,6 +184,7 @@ mod tests {
             dns_register: false,
             dns_zone: None,
             server_id: None,
+            interface: None,
             options: vec![],
             created_at: rfc3339(0),
         }
@@ -324,6 +325,7 @@ mod tests {
             dns_register: false,
             dns_zone: None,
             server_id: None,
+            interface: None,
             options: vec![],
             created_at: rfc3339(0),
         };

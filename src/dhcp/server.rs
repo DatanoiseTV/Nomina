@@ -43,7 +43,7 @@ const V6_CLIENT_PORT: u16 = 546;
 /// Pre-bound DHCP sockets. Binding happens while privileged; the serving loops
 /// run after privilege drop.
 pub struct DhcpSockets {
-    v4: Vec<(SocketAddr, UdpSocket)>,
+    v4: Vec<(SocketAddr, Option<RecvIface>, UdpSocket)>,
     v6: Vec<(SocketAddr, UdpSocket)>,
 }
 
@@ -56,11 +56,26 @@ impl DhcpSockets {
 
 /// Bind all configured DHCPv4/DHCPv6 sockets. Call before dropping privileges.
 /// Returns empty socket sets (a no-op server) when nothing is configured.
-pub fn bind(config: &Config) -> anyhow::Result<DhcpSockets> {
+///
+/// `scope_interfaces` are the distinct interface names that enabled DHCPv4 scopes
+/// are pinned to (from the DB). On Linux each gets its own SO_BINDTODEVICE socket
+/// so directly-connected (non-relayed) VLAN clients select the right scope; the
+/// global `config.dhcp.v4_listen` sockets remain for relayed/untagged traffic.
+pub fn bind(config: &Config, scope_interfaces: &[String]) -> anyhow::Result<DhcpSockets> {
     let mut v4 = Vec::new();
     for addr in &config.dhcp.v4_listen {
         let sock = bind_v4(*addr).with_context(|| format!("binding DHCPv4 {addr}"))?;
-        v4.push((*addr, sock));
+        v4.push((*addr, None, sock));
+    }
+    let bind_all = SocketAddr::from((Ipv4Addr::UNSPECIFIED, V4_RELAY_PORT));
+    for name in scope_interfaces {
+        match bind_v4_device(name) {
+            Ok((sock, addr)) => {
+                tracing::info!("DHCPv4 bound to interface {name}");
+                v4.push((bind_all, Some(RecvIface { name: name.clone(), addr }), sock));
+            }
+            Err(e) => tracing::warn!("DHCPv4: cannot bind to interface {name}: {e}"),
+        }
     }
     let mut v6 = Vec::new();
     for addr in &config.dhcp.v6_listen {
@@ -68,6 +83,45 @@ pub fn bind(config: &Config) -> anyhow::Result<DhcpSockets> {
         v6.push((*addr, sock));
     }
     Ok(DhcpSockets { v4, v6 })
+}
+
+/// Bind a broadcast-capable DHCPv4 socket pinned to a specific network interface
+/// (Linux SO_BINDTODEVICE). Returns the socket and the interface's IPv4 address
+/// (used for subnet-based scope selection). Interface binding is Linux-only;
+/// elsewhere this returns an error and the interface scope falls back to relay /
+/// first-scope selection on the global listener.
+fn bind_v4_device(name: &str) -> anyhow::Result<(UdpSocket, Option<Ipv4Addr>)> {
+    #[cfg(target_os = "linux")]
+    {
+        let sock = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+        sock.set_reuse_address(true)?;
+        sock.set_broadcast(true)?;
+        sock.set_nonblocking(true)?;
+        sock.bind_device(Some(name.as_bytes()))?;
+        sock.bind(&SocketAddr::from((Ipv4Addr::UNSPECIFIED, V4_RELAY_PORT)).into())?;
+        let udp = UdpSocket::from_std(sock.into())?;
+        Ok((udp, interface_ipv4(name)))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = name;
+        anyhow::bail!("per-interface DHCP binding requires Linux (SO_BINDTODEVICE)")
+    }
+}
+
+/// The first IPv4 address assigned to interface `name`, if any.
+fn interface_ipv4(name: &str) -> Option<Ipv4Addr> {
+    use nix::ifaddrs::getifaddrs;
+    let iter = getifaddrs().ok()?;
+    for ifa in iter {
+        if ifa.interface_name != name {
+            continue;
+        }
+        if let Some(sin) = ifa.address.and_then(|a| a.as_sockaddr_in().copied()) {
+            return Some(sin.ip());
+        }
+    }
+    None
 }
 
 /// Bind a broadcast-capable IPv4 UDP socket (SO_REUSEADDR + SO_BROADCAST). The
@@ -95,10 +149,13 @@ fn bind_v6(addr: SocketAddr) -> std::io::Result<UdpSocket> {
 /// Spawn the per-socket serving loops. Returns immediately; the loops run as
 /// detached tasks for the life of the process. A no-op when nothing is bound.
 pub async fn run(state: SharedState, sockets: DhcpSockets) {
-    for (addr, sock) in sockets.v4 {
-        tracing::info!("DHCPv4 listening on {addr}");
+    for (addr, iface, sock) in sockets.v4 {
+        match &iface {
+            Some(ic) => tracing::info!("DHCPv4 listening on {addr} (interface {})", ic.name),
+            None => tracing::info!("DHCPv4 listening on {addr}"),
+        }
         let st = state.clone();
-        tokio::spawn(async move { v4_loop(st, addr, sock).await });
+        tokio::spawn(async move { v4_loop(st, addr, iface, sock).await });
     }
     for (addr, sock) in sockets.v6 {
         tracing::info!("DHCPv6 listening on {addr}");
@@ -126,7 +183,7 @@ fn rfc3339(unix: i64) -> String {
 // DHCPv4 serving loop
 // ---------------------------------------------------------------------------
 
-async fn v4_loop(state: SharedState, addr: SocketAddr, sock: UdpSocket) {
+async fn v4_loop(state: SharedState, addr: SocketAddr, iface: Option<RecvIface>, sock: UdpSocket) {
     let sock = Arc::new(sock);
     let mut buf = vec![0u8; 1500];
     loop {
@@ -144,7 +201,7 @@ async fn v4_loop(state: SharedState, addr: SocketAddr, sock: UdpSocket) {
                 continue;
             }
         };
-        if let Err(e) = handle_v4(&state, &sock, &msg).await {
+        if let Err(e) = handle_v4(&state, &sock, iface.as_ref(), &msg).await {
             tracing::warn!("DHCPv4 handling error: {e}");
         }
     }
@@ -164,6 +221,7 @@ fn v4_client_id(msg: &Dhcp4Message) -> String {
 async fn handle_v4(
     state: &SharedState,
     sock: &UdpSocket,
+    iface: Option<&RecvIface>,
     msg: &Dhcp4Message,
 ) -> anyhow::Result<()> {
     let Some(mtype) = msg.message_type() else {
@@ -172,7 +230,7 @@ async fn handle_v4(
     };
 
     let scopes = state.db.run(Db::list_dhcp_scopes).await?;
-    let Some(scope) = select_v4_scope(&scopes, msg.giaddr).cloned() else {
+    let Some(scope) = select_v4_scope(&scopes, msg.giaddr, iface).cloned() else {
         tracing::debug!(
             "DHCPv4 {mtype:?}: no matching scope for giaddr {}",
             msg.giaddr
@@ -708,24 +766,61 @@ fn reverse_name(ip: IpAddr) -> Option<String> {
 // Pure reply builders & policy (unit-tested)
 // ---------------------------------------------------------------------------
 
-/// Select the DHCPv4 scope for a request: the enabled v4 scope whose subnet
-/// contains `giaddr` (relayed request), else the first enabled v4 scope.
-pub fn select_v4_scope(scopes: &[DhcpScope], giaddr: Ipv4Addr) -> Option<&DhcpScope> {
+/// The interface a directly-connected DHCPv4 request arrived on, when the
+/// listening socket is bound to a specific device (Linux SO_BINDTODEVICE). Lets
+/// non-relayed VLAN clients (giaddr == 0) select the right scope.
+#[derive(Clone, Debug, Default)]
+pub struct RecvIface {
+    pub name: String,
+    pub addr: Option<Ipv4Addr>,
+}
+
+/// Select the DHCPv4 scope for a request, in priority order:
+///   1. relayed (`giaddr` set) → the enabled v4 scope whose subnet contains it;
+///   2. arrived on a bound interface → the scope pinned to that interface, else
+///      the scope whose subnet contains the interface's own address;
+///   3. fallback → the first enabled v4 scope.
+pub fn select_v4_scope<'a>(
+    scopes: &'a [DhcpScope],
+    giaddr: Ipv4Addr,
+    iface: Option<&RecvIface>,
+) -> Option<&'a DhcpScope> {
+    let enabled_v4 = |s: &&DhcpScope| s.enabled && s.family == IpFamily::V4;
+
     if giaddr != Ipv4Addr::UNSPECIFIED {
-        if let Some(s) = scopes.iter().find(|s| {
-            s.enabled
-                && s.family == IpFamily::V4
-                && s.subnet
-                    .parse::<ipnet::Ipv4Net>()
-                    .map(|net| net.contains(&giaddr))
-                    .unwrap_or(false)
+        if let Some(s) = scopes.iter().filter(enabled_v4).find(|s| {
+            s.subnet
+                .parse::<ipnet::Ipv4Net>()
+                .map(|net| net.contains(&giaddr))
+                .unwrap_or(false)
         }) {
             return Some(s);
         }
     }
-    scopes
-        .iter()
-        .find(|s| s.enabled && s.family == IpFamily::V4)
+
+    if let Some(ic) = iface {
+        // Scope explicitly pinned to this interface wins.
+        if let Some(s) = scopes
+            .iter()
+            .filter(enabled_v4)
+            .find(|s| s.interface.as_deref() == Some(ic.name.as_str()))
+        {
+            return Some(s);
+        }
+        // Otherwise the scope whose subnet contains the interface's own address.
+        if let Some(addr) = ic.addr {
+            if let Some(s) = scopes.iter().filter(enabled_v4).find(|s| {
+                s.subnet
+                    .parse::<ipnet::Ipv4Net>()
+                    .map(|net| net.contains(&addr))
+                    .unwrap_or(false)
+            }) {
+                return Some(s);
+            }
+        }
+    }
+
+    scopes.iter().find(enabled_v4)
 }
 
 /// The IPv4 subnet mask implied by a CIDR subnet string (e.g. `192.168.1.0/24`
@@ -924,6 +1019,7 @@ mod tests {
             dns_register: false,
             dns_zone: None,
             server_id: server_id.map(String::from),
+            interface: None,
             options: vec![],
             created_at: "1970-01-01T00:00:00Z".into(),
         }
@@ -1063,20 +1159,50 @@ mod tests {
         let scopes = vec![a, b];
 
         // A relayed request from 192.168.5.x picks scope b by subnet.
-        let sel = select_v4_scope(&scopes, Ipv4Addr::new(192, 168, 5, 9)).unwrap();
+        let sel = select_v4_scope(&scopes, Ipv4Addr::new(192, 168, 5, 9), None).unwrap();
         assert_eq!(sel.id, 2);
         // No giaddr → first enabled scope (a).
-        let sel0 = select_v4_scope(&scopes, Ipv4Addr::UNSPECIFIED).unwrap();
+        let sel0 = select_v4_scope(&scopes, Ipv4Addr::UNSPECIFIED, None).unwrap();
         assert_eq!(sel0.id, 1);
         // A giaddr matching no scope subnet → first enabled scope (a).
-        let sel_nomatch = select_v4_scope(&scopes, Ipv4Addr::new(172, 16, 0, 1)).unwrap();
+        let sel_nomatch = select_v4_scope(&scopes, Ipv4Addr::new(172, 16, 0, 1), None).unwrap();
         assert_eq!(sel_nomatch.id, 1);
 
         // A disabled first scope is skipped.
         let mut scopes2 = scopes.clone();
         scopes2[0].enabled = false;
-        let sel2 = select_v4_scope(&scopes2, Ipv4Addr::UNSPECIFIED).unwrap();
+        let sel2 = select_v4_scope(&scopes2, Ipv4Addr::UNSPECIFIED, None).unwrap();
         assert_eq!(sel2.id, 2);
+    }
+
+    #[test]
+    fn select_v4_scope_by_interface() {
+        // Two directly-connected VLAN scopes, no relay (giaddr == 0).
+        let mut a = scope_v4("192.168.10.0/24", Some("192.168.10.1"));
+        a.id = 1;
+        a.name = "vlan10".into();
+        a.interface = Some("eth0.10".into());
+        let mut b = scope_v4("192.168.20.0/24", Some("192.168.20.1"));
+        b.id = 2;
+        b.name = "vlan20".into();
+        b.interface = Some("eth0.20".into());
+        let scopes = vec![a, b];
+
+        // Request arriving on eth0.20 selects the scope pinned to it.
+        let ic = RecvIface { name: "eth0.20".into(), addr: None };
+        let sel = select_v4_scope(&scopes, Ipv4Addr::UNSPECIFIED, Some(&ic)).unwrap();
+        assert_eq!(sel.id, 2);
+
+        // An interface with no explicit pin falls back to subnet-by-address.
+        let scopes2: Vec<_> = scopes.iter().cloned().map(|mut s| { s.interface = None; s }).collect();
+        let ic2 = RecvIface { name: "br0".into(), addr: Some(Ipv4Addr::new(192, 168, 10, 1)) };
+        let sel2 = select_v4_scope(&scopes2, Ipv4Addr::UNSPECIFIED, Some(&ic2)).unwrap();
+        assert_eq!(sel2.id, 1);
+
+        // Relay still wins over interface.
+        let ic3 = RecvIface { name: "eth0.10".into(), addr: None };
+        let sel3 = select_v4_scope(&scopes, Ipv4Addr::new(192, 168, 20, 1), Some(&ic3)).unwrap();
+        assert_eq!(sel3.id, 2);
     }
 
     #[test]
@@ -1113,6 +1239,7 @@ mod tests {
             dns_register: false,
             dns_zone: None,
             server_id: None,
+            interface: None,
             options: vec![opt(23, "2001:db8::53", DhcpOptionKind::IpList)],
             created_at: "1970-01-01T00:00:00Z".into(),
         }

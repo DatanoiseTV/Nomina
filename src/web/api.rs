@@ -218,6 +218,37 @@ pub async fn mdns_hosts(State(state): State<SharedState>, _auth: Authed) -> Resp
     }))
 }
 
+/// Enumerate the host's network interfaces (name + IPv4/IPv6 addresses), so the
+/// UI can offer an interface picker for DHCP scopes. Up, non-loopback only.
+pub async fn list_interfaces(_auth: Authed) -> Response {
+    use nix::ifaddrs::getifaddrs;
+    use nix::net::if_::InterfaceFlags;
+    use std::collections::BTreeMap;
+    let mut ifaces: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    if let Ok(iter) = getifaddrs() {
+        for ifa in iter {
+            if !ifa.flags.contains(InterfaceFlags::IFF_UP)
+                || ifa.flags.contains(InterfaceFlags::IFF_LOOPBACK)
+            {
+                continue;
+            }
+            let entry = ifaces.entry(ifa.interface_name.clone()).or_default();
+            if let Some(addr) = ifa.address {
+                if let Some(sin) = addr.as_sockaddr_in() {
+                    entry.push(sin.ip().to_string());
+                } else if let Some(sin6) = addr.as_sockaddr_in6() {
+                    entry.push(sin6.ip().to_string());
+                }
+            }
+        }
+    }
+    let list: Vec<Value> = ifaces
+        .into_iter()
+        .map(|(name, addrs)| json!({ "name": name, "addresses": addrs }))
+        .collect();
+    ok_json(json!({ "interfaces": list }))
+}
+
 /// Clear retained per-query detail (recent queries + top domains).
 pub async fn clear_stats(State(state): State<SharedState>, _auth: Authed) -> Response {
     state.stats.clear_log();
@@ -2007,6 +2038,8 @@ pub struct DhcpScopeInput {
     #[serde(default)]
     server_id: Option<String>,
     #[serde(default)]
+    interface: Option<String>,
+    #[serde(default)]
     options: Vec<DhcpOption>,
 }
 
@@ -2105,6 +2138,7 @@ pub async fn create_dhcp_scope(
                 req.dns_register,
                 req.dns_zone.as_deref(),
                 req.server_id.as_deref(),
+                req.interface.as_deref().filter(|s| !s.trim().is_empty()),
                 &req.options,
             )
         })
@@ -2138,6 +2172,7 @@ pub async fn update_dhcp_scope(
                 Some(req.dns_register),
                 Some(req.dns_zone.as_deref()),
                 Some(req.server_id.as_deref()),
+                Some(req.interface.as_deref().filter(|s| !s.trim().is_empty())),
                 Some(&req.options),
             )
         })

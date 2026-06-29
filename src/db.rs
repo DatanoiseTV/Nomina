@@ -1862,6 +1862,7 @@ impl Db {
         dns_register: bool,
         dns_zone: Option<&str>,
         server_id: Option<&str>,
+        interface: Option<&str>,
         options: &[DhcpOption],
     ) -> QueryResult<i64> {
         let opts = serde_json::to_string(options).map_err(json_err)?;
@@ -1877,6 +1878,7 @@ impl Db {
                 dhcp_scopes::dns_register.eq(dns_register),
                 dhcp_scopes::dns_zone.eq(dns_zone),
                 dhcp_scopes::server_id.eq(server_id),
+                dhcp_scopes::interface.eq(interface),
                 dhcp_scopes::options.eq(opts),
                 dhcp_scopes::created_at.eq(now()),
             ))
@@ -1896,6 +1898,7 @@ impl Db {
         dns_register: Option<bool>,
         dns_zone: Option<Option<&str>>,
         server_id: Option<Option<&str>>,
+        interface: Option<Option<&str>>,
         options: Option<&[DhcpOption]>,
     ) -> QueryResult<()> {
         if let Some(v) = name {
@@ -1943,6 +1946,11 @@ impl Db {
                 .set(dhcp_scopes::server_id.eq(v))
                 .execute(conn)?;
         }
+        if let Some(v) = interface {
+            diesel::update(dhcp_scopes::table.filter(dhcp_scopes::id.eq(id)))
+                .set(dhcp_scopes::interface.eq(v))
+                .execute(conn)?;
+        }
         if let Some(v) = options {
             let json = serde_json::to_string(v).map_err(json_err)?;
             diesel::update(dhcp_scopes::table.filter(dhcp_scopes::id.eq(id)))
@@ -1972,6 +1980,7 @@ impl Db {
         dhcp_scopes::options,
         dhcp_scopes::created_at,
         dhcp_scopes::server_id,
+        dhcp_scopes::interface,
     ) = (
         dhcp_scopes::id,
         dhcp_scopes::name,
@@ -1986,6 +1995,7 @@ impl Db {
         dhcp_scopes::options,
         dhcp_scopes::created_at,
         dhcp_scopes::server_id,
+        dhcp_scopes::interface,
     );
 
     fn dhcp_scope_from(t: DhcpScopeTuple) -> QueryResult<DhcpScope> {
@@ -2003,6 +2013,7 @@ impl Db {
             dns_register: t.8,
             dns_zone: t.9,
             server_id: t.12,
+            interface: t.13,
             options,
             created_at: t.11,
         })
@@ -2226,6 +2237,7 @@ type DhcpScopeTuple = (
     String,
     String,
     Option<String>,
+    Option<String>,
 );
 
 /// The column tuple type used for [`DhcpLease`] reads.
@@ -2299,6 +2311,7 @@ mod dhcp_tests {
                 true,
                 Some("home.lan"),
                 Some("192.168.1.1"),
+                Some("eth0.10"),
                 &[opt()],
             )?;
             let s = Db::dhcp_scope(c, id)?.expect("scope exists");
@@ -2309,6 +2322,7 @@ mod dhcp_tests {
             assert!(s.dns_register);
             assert_eq!(s.dns_zone.as_deref(), Some("home.lan"));
             assert_eq!(s.server_id.as_deref(), Some("192.168.1.1"));
+            assert_eq!(s.interface.as_deref(), Some("eth0.10"));
             assert_eq!(s.options.len(), 1);
             assert_eq!(s.options[0].code, 6);
 
@@ -2324,6 +2338,7 @@ mod dhcp_tests {
                 None,
                 Some(None),
                 Some(Some("192.168.1.2")),
+                Some(Some("eth0.20")),
                 Some::<&[DhcpOption]>(&[]),
             )?;
             let s2 = Db::dhcp_scope(c, id)?.unwrap();
@@ -2333,6 +2348,7 @@ mod dhcp_tests {
             assert_eq!(s2.lease_secs, 7200);
             assert_eq!(s2.dns_zone, None);
             assert_eq!(s2.server_id.as_deref(), Some("192.168.1.2"));
+            assert_eq!(s2.interface.as_deref(), Some("eth0.20"));
             assert!(s2.options.is_empty());
 
             assert_eq!(Db::list_dhcp_scopes(c)?.len(), 1);
@@ -2357,6 +2373,7 @@ mod dhcp_tests {
                 "10.0.0.20",
                 3600,
                 false,
+                None,
                 None,
                 None,
                 &[],
@@ -2402,6 +2419,7 @@ mod dhcp_tests {
                 "10.0.0.20",
                 3600,
                 false,
+                None,
                 None,
                 None,
                 &[],

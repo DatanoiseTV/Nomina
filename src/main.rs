@@ -248,7 +248,21 @@ async fn main() -> anyhow::Result<()> {
     let dns_sockets = dns::server::bind(&config).await?;
 
     // DHCP sockets (ports 67/547 are privileged). No-op when unconfigured.
-    let dhcp_sockets = dhcp::server::bind(&config)?;
+    // Gather the interfaces that enabled DHCPv4 scopes are pinned to, so the
+    // server can bind a per-interface socket for directly-connected VLAN clients.
+    let scope_interfaces: Vec<String> = {
+        use crate::models::IpFamily;
+        let scopes = state.db.run(db::Db::list_dhcp_scopes).await.unwrap_or_default();
+        let mut ifaces: Vec<String> = scopes
+            .into_iter()
+            .filter(|s| s.enabled && s.family == IpFamily::V4)
+            .filter_map(|s| s.interface)
+            .collect();
+        ifaces.sort();
+        ifaces.dedup();
+        ifaces
+    };
+    let dhcp_sockets = dhcp::server::bind(&config, &scope_interfaces)?;
 
     let web_listener = if config.web.disabled {
         None

@@ -212,6 +212,7 @@ async function openScopeDialog({ scope, onSaved }) {
   const isEdit = !!scope;
   const family = isEdit ? scope.family : "v4";
   const catalog = await api.dhcpOptionCatalog(family).then((r) => r.options).catch(() => []);
+  const ifaces = await api.interfaces().then((r) => r.interfaces).catch(() => []);
 
   const name = h("input", { type: "text", value: scope ? scope.name : "", placeholder: "lan", required: true });
   const familySel = h("select", ["v4", "v6"].map((f) => h("option", { value: f, selected: family === f }, fmtFamily(f))));
@@ -221,6 +222,11 @@ async function openScopeDialog({ scope, onSaved }) {
   const rangeEnd = h("input", { type: "text", value: scope ? scope.range_end : "", placeholder: "192.168.1.200" });
   const lease = h("input", { type: "number", value: scope ? scope.lease_secs : 86400, min: 60 });
   const serverId = h("input", { type: "text", value: scope && scope.server_id ? scope.server_id : "", placeholder: "192.168.1.1 (this server)" });
+  const ifaceListId = "dhcp-iface-list";
+  const ifaceList = h("datalist", { id: ifaceListId },
+    ifaces.map((i) => h("option", { value: i.name }, i.addresses && i.addresses.length ? i.addresses.join(", ") : "")));
+  const iface = h("input", { type: "text", list: ifaceListId,
+    value: scope && scope.interface ? scope.interface : "", placeholder: "any (relay / single LAN)" });
   const enabled = h("input", { type: "checkbox", checked: scope ? scope.enabled : true });
   const dnsReg = h("input", { type: "checkbox", checked: scope ? scope.dns_register : false });
   const dnsZone = h("input", { type: "text", value: scope && scope.dns_zone ? scope.dns_zone : "", placeholder: "home.lan" });
@@ -243,6 +249,8 @@ async function openScopeDialog({ scope, onSaved }) {
     ]),
     h("div.field", [h("label", "Server identifier (IPv4)"), serverId,
       h("div.hint", "This server's address on the subnet — sent as option 54. Required for IPv4 serving.")]),
+    h("div.field", [h("label", "Interface"), iface, ifaceList,
+      h("div.hint", "Bind this scope to a network interface for directly-connected VLANs (e.g. eth0.20). Leave empty for relayed clients or a single LAN. Changing this needs a restart. Linux only.")]),
     h("div.field", [h("label.switch", [enabled, h("span.track"), h("span", "Scope enabled")])]),
     h("div.field", [h("label.switch", [dnsReg, h("span.track"), h("span", "Register leases in DNS")])]),
     h("div.field", [h("label", "DNS zone"), dnsZone,
@@ -271,6 +279,7 @@ async function openScopeDialog({ scope, onSaved }) {
             dns_register: dnsReg.checked,
             dns_zone: dnsZone.value.trim() || null,
             server_id: serverId.value.trim() || null,
+            interface: iface.value.trim() || null,
             options: opts.collect(),
           };
           try {

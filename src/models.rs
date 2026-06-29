@@ -516,6 +516,11 @@ pub struct DhcpScope {
     /// (server identifier) in OFFER/ACK. Required for DHCPv4 serving; ignored
     /// for IPv6 scopes (which derive a server DUID instead).
     pub server_id: Option<String>,
+    /// Network interface this scope serves directly (e.g. a VLAN sub-interface
+    /// like `eth0.20`). When set, directly-connected (non-relayed) requests
+    /// arriving on that interface select this scope. `None` = any interface
+    /// (relay/giaddr selection, or single-LAN fallback).
+    pub interface: Option<String>,
     /// Options served to clients of this scope.
     pub options: Vec<DhcpOption>,
     pub created_at: String,
